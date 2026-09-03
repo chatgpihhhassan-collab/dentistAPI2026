@@ -1,0 +1,46 @@
+{
+  "drug_index": {
+    "Amoxicillin": {
+      "generic": "Amoxicillin",
+      "sdcep_guidelines": "500mg TDS for 5 days for dental infections",
+      "regions": {
+        "NZ": {
+          "standard_brand_names": ["Amoxil", "Ibiamox", "Alphamox"],
+          "legal_limits": "Max supply regulations under NZ Medicines Regulations apply",
+          "notes": "Aligns with NZ Formulary (NZF) dental standards"
+        },
+        "PK": {
+          "standard_brand_names": ["Amoxil", "Wymox", "Amoxicap"],
+          "legal_limits": "DRAP standard guidelines",
+          "notes": "Commonly dispensed over-the-counter but requires prescription validation"
+        }
+      }
+    },
+    "Co-amoxiclav": {
+      "generic": "Amoxicillin with Clavulanic Acid",
+      "sdcep_guidelines": "625mg BD or TDS for 5 days for severe dental abscess",
+      "regions": {
+        "NZ": {
+          "standard_brand_names": ["Synermox", "Clavulin"],
+          "notes": "Used only if first-line amoxicillin fails"
+        },
+        "PK": {
+          "standard_brand_names": ["Augmentin", "Curam"],
+          "notes": "Highly prescribed first-line locally in PK"
+        }
+      }
+    },
+    "Paracetamol": {
+      "generic": "Paracetamol",
+      "sdcep_guidelines": "500mg to 1g QDS as needed for pain relief",
+      "regions": {
+        "NZ": {
+          "standard_brand_names": ["Pamol", "Panadol"]
+        },
+        "PK": {
+          "standard_brand_names": ["Panadol", "Calpol", "Febrol"]
+        }
+      }
+    }
+  }
+}

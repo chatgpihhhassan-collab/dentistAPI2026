@@ -1,0 +1,327 @@
+Pathology
+Tooth 1 occlusal fissure caries
+Tooth 2 mesio-occlusal decay
+Tooth 3 disto-occlusal interproximal caries
+Tooth 4 mesio-occluso-distal cavitation
+Tooth 5 buccal cervical class V decay
+Tooth 6 lingual pit caries
+-----------------------------
+Restorative
+Tooth 7 occlusal composite restoration shade A2
+Tooth 8 mesio-occlusal composite resin filling
+Tooth 9 disto-occlusal composite filling with tight contact
+Tooth 10 MOD composite restoration
+Tooth 11 occlusal amalgam filling with intact margins
+Tooth 12 MOD amalgam restoration
+Tooth 13 disto-occlusal amalgam filling
+Tooth 14 class V cervical GIC restoration
+Tooth 15 lingual composite restoration
+Tooth 16 preventive pit and fissure sealant applied
+------------------------------
+Endodontic
+Tooth 17 completed root canal treatment obturated with gutta-percha
+Tooth 18 RCT with 4mm periapical radiolucency at apex
+Tooth 19 RCT with custom cast post and core
+Tooth 20 RCT with prefabricated fiber post and core buildup
+Tooth 21 vital pulp exposure from traumatic fracture
+Tooth 22 symptomatic irreversible pulpitis
+Tooth 23 pulpectomy completed, calcium hydroxide placed
+Tooth 24 apical periodontitis with localized percussion tenderness
+Tooth 25 chronic periapical granuloma at root apex
+Tooth 26 apicoectomy performed with retrograde MTA root-end fill
+---------------------------------------
+Prosthodontics
+Tooth 27 full monolithic zirconia crown
+Tooth 28 porcelain-fused-to-metal PFM crown
+Tooth 29 full cast gold metal crown
+Tooth 30 porcelain laminate veneer on facial surface
+Tooth 31 ceramic onlay covering functional cusps
+Tooth 32 composite inlay on MOD surfaces
+Tooth 1 endocrown ceramic restoration
+Tooth 2 provisional temporary acrylic crown cemented
+Tooth 3 fractured ceramic margin on existing PFM crown
+Tooth 4 dislodged crown, recementation required
+------------------------------------------
+Surgical
+Tooth 5 missing congenitally / extracted previously
+Tooth 6 severely decayed, extraction indicated
+Tooth 7 fractured root, planned for surgical extraction
+Tooth 8 replaced by dental implant with screw-retained zirconia crown
+Tooth 9 dental implant placed, healing abutment in situ
+Tooth 10 retained root tip in alveolar ridge
+Tooth 11 horizontally impacted wisdom tooth in bone
+Tooth 12 mesioangular impacted tooth with coronal pericoronitis
+Tooth 13 distoangular impacted tooth
+Tooth 14 vertically impacted deep in bone
+---------------------------------------
+general 
+Tooth 15 grade 1 mobility with physiologic fremitus"
+Tooth 16 grade 2 mobility with 3mm bone loss"
+Tooth 17 grade 3 mobility with depressibility in socket"
+Tooth 18 2mm gingival recession on facial surface"
+Tooth 19 4mm severe gingival recession with root sensitivity"
+Tooth 20 heavy subgingival calculus band around cervical margin
+Tooth 21 class II furcation defect on buccal root
+Tooth 22 45 degree mesiopalatal rotation
+Tooth 23 orthodontic bracket bonded on facial surface
+Tooth 24 hairline enamel crack line without pulp involvement
+Tooth 25 grade 1 mobility with physiologic fremitus
+Tooth 26 grade 2 mobility with 3mm bone loss
+Tooth 27 grade 3 mobility with depressibility in socket
+Tooth 28 2mm gingival recession on facial surface
+Tooth 29 4mm severe gingival recession with root sensitivity
+Tooth 30 heavy subgingival calculus band around cervical margin
+Tooth 31 class II furcation defect on buccal root
+------------------------
+8-14  Child
+Primary tooth A pulpotomy with MTA and SSC
+Primary tooth A mesio-occlusal composite restoration
+Primary tooth A severe early childhood caries on buccal surface
+Primary tooth A stainless steel crown fitted
+Primary tooth A band and loop space maintainer indicated
+
+8-14 young
+Restorative 
+Tooth 1 MOD amalgam restoration
+Tooth 2 MO composite filling
+Tooth 3 DO composite filling
+Tooth 4 occlusal composite filling
+Tooth 5 cervical buccal amalgam restoration
+Tooth 6 MOD GIC glass ionomer restoration
+Tooth 7 occlusal amalgam restoration
+Tooth 8 cervical buccal GIC glass ionomer restoration
+Tooth 9 DO GIC glass ionomer restoration
+Tooth 10 occlusal GIC glass ionomer restoration
+Tooth 11 cervical buccal composite filling
+Endodontic 
+Tooth 12 root canal treatment with gutta percha obturation
+Tooth 13 periapical abscess with radiolucent halo
+Tooth 14 vital pulp exposure on mesio-occlusal decay
+Tooth 15 calcified canals requiring endodontic surgery
+Surgical 
+Tooth 16 titanium implant fixture with zirconia crown
+Tooth 17 indicated for surgical extraction
+Tooth 18 extracted in dental history
+Tooth 19 retained root tip in alveolar crest
+Pathology 
+Tooth 20 Class V buccal cervical decay
+Tooth 21 incipient enamel demineralization ICDAS 2
+Tooth 22 deep cavitated necrotic dentinal decay on occlusal
+Tooth 23 recurrent margin breakdown under existing restoration
+Tooth 24 mesial interproximal carious lesion
+Periodontal 
+Tooth 25 Grade 2 pathologic mobility with 6mm pocket
+Tooth 26 3mm gingival recession with exposed root
+Tooth 27 heavy subgingival calculus band on lingual
+Tooth 28 Grade 1 physiological mobility baseline
+Tooth 29 Grade 2 pathologic mobility with 6mm pocket
+Occlusion 
+Patient presents with Angle Class II Division 1 malocclusion with 6mm overjet
+Patient presents with Angle Class III underbite with anterior crossbite
+Patient presents with Deep impinging overbite with palatal soft tissue contact
+Patient presents with Anterior open bite secondary to tongue thrust habit
+Patient presents with Right unilateral posterior crossbite on molars
+Patient presents with Edge to edge anterior incisal relationship
+
+TMJ
+Diagnose right TMJ reciprocal clicking on opening and closing
+Diagnose bilateral TMJ crepitus and osteoarthritis bone grinding
+Diagnose acute trismus with maximum mouth opening limited to 26mm
+Diagnose myofascial pain dysfunction with tender masseter muscles
+Diagnose left mandibular deviation upon wide jaw opening
+Bruxism 
+Record severe nocturnal tooth grinding with dentin wear facets
+Record abfraction wedge-shaped cervical defect on buccal
+Record prescribe hard acrylic occlusal nightguard splint
+Record masseter muscle hypertrophy secondary to daytime clenching
+
+Impaction 
+Evaluate horizontal impacted third molar Pell and Gregory Class II B
+Evaluate mesioangular impacted lower wisdom tooth with pericoronitis
+Evaluate conical supernumerary mesiodens located between central incisors
+Evaluate distoangular impacted upper third molar close to sinus
+Sensitivity 
+Patient complains of acute cold sensitivity with exposed cervical root dentin
+Patient complains of tactile toothbrush hypersensitivity on cervical margin
+Patient complains of apply GLUMA desensitizer varnish on exposed roots
+Radiographic 
+Radiographic survey shows Glickman Class II furcation radiolucency on lower first molar
+Radiographic survey shows moderate horizontal alveolar bone loss 25% on bitewings
+Radiographic survey shows condensing osteitis radio-opacity at apex of non-vital tooth
+Radiographic survey shows well-circumscribed periapical radiolucent cyst
+
+-------------------------------------------------------------------------------------------------------------------------
+SECTION 1: Orthodontic & Occlusal Malocclusions
+1. Deep Overbite (80% Overlap)
+Query (Copy-Paste for Test):
+"Severe deep overbite with 80% vertical overlap and palatal gingival contact on maxillary incisors. Indicated for orthodontic leveling of curve of Spee."
+
+Result:
+Suite: 1. Ortho & Occlusal Suite ➔ Overbite Tab open hoga.
+Overbite slider 80% par set hoga.
+Anterior teeth #7, #8, #9, #10, #23, #24, #25, #26 Blue/Purple color mein highlight honge (CDT D8080).
+2. Class III Underbite (−3.5mm Negative Overjet)
+Query (Copy-Paste for Test):
+"Class III malocclusion with -3.5mm negative overjet and anterior crossbite. Indicated for protraction facemask and fixed braces."
+
+Result:
+Suite: 1. Ortho & Occlusal Suite ➔ Underbite Tab open hoga.
+Overjet slider -3.5 mm par set hoga aur reverse overjet simulation activate hogi (CDT D8080).
+3. Bilateral Posterior Crossbite
+Query (Copy-Paste for Test):
+"Constricted maxillary arch resulting in bilateral posterior crossbite on first and second molars. Indicated for Rapid Palatal Expansion appliance."
+
+Result:
+Suite: 1. Ortho & Occlusal Suite ➔ Crossbite Tab open hoga.
+Molars #3, #14, #19, #30 highlight honge aur RPE expansion card show hoga (CDT D8210).
+4. Anterior Vertical Open Bite (4.5mm Gap)
+Query (Copy-Paste for Test):
+"4.5mm anterior vertical open bite secondary to persistent tongue thrust habit. Indicated for tongue crib habit-breaker appliance."
+
+Result:
+Suite: 1. Ortho & Occlusal Suite ➔ Open Bite Tab open hoga.
+Vertical Gap 4.5 mm par set hoga (CDT D8220).
+5. Severe Bruxism & Occlusal Attrition
+Query (Copy-Paste for Test):
+"Severe nocturnal bruxism causing occlusal flattening and cuspal loss on molars #3, #14, #19, #30 with dentin exposure. Nightguard indicated."
+
+Result:
+Suite: 1. Ortho & Occlusal Suite ➔ Bruxism Wear Tab open hoga.
+Teeth #3, #14, #19, #30 Amber (#F59E0B) color mein dentin facets ke sath highlight honge (CDT D9944).
+SECTION 2: Wisdom Teeth & Canine / Premolar Impactions
+6. Horizontally Impacted 3rd Molar (90° Angle)
+Query (Copy-Paste for Test):
+"Horizontally impacted 90° third molar #17 in close proximity to inferior alveolar nerve canal. 3D CBCT recommended."
+
+Result:
+Suite: 2. Wisdom & Impaction Suite ➔ 🩻 Horizontally Impacted Molar (D7240) tab open hoga.
+Left side par X-ray dark field radiograph 90° horizontal molar aur IAN nerve canal direct contact ke sath render karega.
+7. Mesioangular 45° Impacted Wisdom Tooth
+Query (Copy-Paste for Test):
+"Mesioangular 45° impaction on #32 impinging on distal cervical root of #31 with external resorption risk."
+
+Result:
+Suite: 2. Wisdom & Impaction Suite ➔ 📐 Mesioangular Wisdom Molar (D7230) tab open hoga.
+Left diagram par tooth 45° tilt hokar 2nd molar ki root me contact aur red resorption warning show karega.
+8. Palatally Trapped Maxillary Canine
+Query (Copy-Paste for Test):
+"Unerupted permanent canine #11 locked palatally in alveolar bone. Indicated for surgical exposure with gold chain traction."
+
+Result:
+Suite: 2. Wisdom & Impaction Suite ➔ 🦷 Palatally Trapped Canine (D7280) tab open hoga.
+Left cross-section par palate ke andar trapped canine aur gold chain traction plan render hoga.
+9. Partially Erupted Premolar with Inflamed Operculum
+Query (Copy-Paste for Test):
+"Partially erupted premolar #20 with pericoronal soft tissue flap and chronic inflammation. Operculectomy indicated."
+
+Result:
+Suite: 2. Wisdom & Impaction Suite ➔ 🔴 Partially Erupted Premolar (D7220) tab open hoga.
+Left diagram par inflamed pericoronal opercular flap emerge hoga (CDT D7220 / D7971).
+SECTION 3: TMJ Joint & Jaw Articulation / Clicking
+10. TMJ Clicking (Anterior Disc Displacement with Reduction)
+Query (Copy-Paste for Test):
+"Right TMJ anterior disc displacement with reduction displaying reciprocal acoustic clicking at 35mm opening."
+
+Result:
+Suite: 3. TMJ Suite ➔ 🔊 TMJ Clicking (Disc Reduction) tab open hoga.
+Left diagram par condyle 35mm par translate hokar 🔊 CLICK! wave pulse emit karega (CDT D7880).
+11. Acute Closed Lock & Trismus (Limited Opening < 28mm)
+Query (Copy-Paste for Test):
+"Acute closed lock of left TMJ with non-reducing anterior disc displacement. Interincisal opening limited to 24mm trismus."
+
+Result:
+Suite: 3. TMJ Suite ➔ 🔒 Closed Lock (Non-Reducing) tab open hoga.
+Left diagram par jammed disc condyle ko aagay translate hone se block kar ke ⛔ Hard Stop barrier display karega (CDT D7880).
+12. Normal TMJ Physiological Articulation
+Query (Copy-Paste for Test):
+"Normal TMJ condyle-disc fossa articulation with smooth bilateral excursion and 44mm physiological opening."
+
+Result:
+Suite: 3. TMJ Suite ➔ 🟢 Normal TMJ Articulation tab open hoga.
+Opening 44.0 mm par set hogi aur disc smooth seated position mein translate hoga (CDT D0140).
+
+--------------------------------------------------------------------
+┌────────────────────────────────────────────────────────┐
+│  🎙️ Doctor Spoken Voice  OR  💬 Chatbot Typed Query   │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+     [Layer 1: ChartPage AI Clinical Intent Engine]
+ • Query ko detect karta hai (e.g. Overbite, Impaction, TMJ, etc.)
+ • Live Parameters extract karta hai (e.g. 80% overlap, -3.5mm overjet, 45° angle)
+ • Diagnostic Suite modal open karke relevant tab aur slider set karta hai
+                            │
+                            ▼
+     [Layer 2: Real-time 2D / 3D Canvas Update]
+ • React `teethState` foran update hota hai
+ • 2D Odontogram aur 3D Jaw Arch par teeth (#7–#10, #17, #32, #6, #11, etc.) highlight hote hain
+                            │
+                            ▼
+     [Layer 3: SQL Server Database Permanent Persistence]
+ • API Call 1: POST http://localhost:5107/api/patients/teeth/update-bulk
+   ↳ Database mein tooth record, condition status, CDT code aur comments permanently save ho jate hain.
+ • API Call 2: POST http://localhost:5107/api/patients/{patientId}/clinical-logs
+   ↳ Patient ke audit trail aur clinical history mein record create ho jata hai.
+
+
+
+
+--------------------------------------
+1. Deep Bite / Overbite (8 unique templates)
+Severe deep overbite (X% overlap) with palatal gingival contact on maxillary incisors. Indicated for orthodontic leveling of curve of Spee.
+Deep incisal overbite presenting with X% vertical overlap and lower anterior enamel attrition. Recommend fixed braces leveling.
+Class II Division 2 malocclusion with X% deep bite and retroclined upper central incisors (#8, #9). Indicated for bite opening appliance.
+Traumatic deep overbite (X% overlap) causing palatal soft tissue impingement and gingival stripping behind #8 and #9.
+Vertical overbite measured at X% with excessive curve of Spee in the lower arch. Treatment plan includes orthodontic intrusion arches.
+Deep bite (X% overlap) with secondary incisal edge chipping on teeth #24, #25. Orthodontic alignment and bite turbo indicated.
+Adolescent deep bite malocclusion (X% incisal coverage). Indicated for comprehensive adolescent orthodontics (CDT D8080).
+Palatal impingement observed secondary to severe X% overbite. Indicated for bite plate and continuous arch leveling.
+2. Class III Malocclusion / Underbite (6 unique templates)
+Class III malocclusion with −Xmm negative overjet and anterior crossbite. Indicated for protraction facemask and fixed braces.
+Mandibular prognathism displaying −Xmm underbite with reverse overjet on incisors #7–#10.
+Skeletal Class III growth pattern with −Xmm negative anterior overjet. Recommend orthopedic maxillary expansion and orthopedic traction.
+Anterior crossbite with −Xmm negative overjet causing pseudo-Class III forward mandibular positioning.
+True skeletal mandibular protrusion with −Xmm negative overjet. Surgical-orthodontic evaluation indicated post-growth spurt.
+Class III anterior crossbite of −Xmm with compensatory retroclination of lower incisors #23–#26.
+3. Posterior Crossbite (5 unique templates — laterality varies: right/left/bilateral)
+[Laterality] posterior crossbite with functional lateral mandibular shift during terminal closure.
+Constricted maxillary arch resulting in [laterality] posterior crossbite on first and second molars.
+Posterior crossbite ([laterality]) secondary to narrow maxilla. Indicated for Rapid Palatal Expansion (RPE) appliance.
+Anterior and [laterality] posterior crossbite causing facial asymmetry and uneven condylar seating.
+Unilateral [laterality] crossbite on teeth #X, #Y with associated buccal tipping of opposing mandibular teeth.
+4. Open Bite (5 unique templates)
+Xmm anterior vertical open bite secondary to persistent tongue thrust habit and mouth breathing.
+Skeletal open bite measured at Xmm with only second molars in occlusal contact.
+Anterior open bite (Xmm vertical gap) from prolonged digit sucking. Indicated for tongue crib habit-breaker (D8220).
+Vertical open bite of Xmm between anterior incisors #7–#10 and #23–#26 with lisping speech impediment.
+Severe anterior open bite (Xmm) with divergent occlusal planes. Fixed appliance with vertical elastics indicated.
+5. Bruxism / Occlusal Wear (5 unique templates — severity varies: mild/moderate/severe)
+[Severity] enamel wear facets with dentin exposure on 1st molars from nocturnal clenching.
+Nocturnal bruxism causing [severity] occlusal flattening and cuspal loss on molars #3, #14, #19, #30.
+[Severity] attrition facets on molar occlusal surfaces with associated dentinal hypersensitivity. Nightguard indicated.
+Severe clenching habit displaying [severity] wear pattern and micro-fractures in posterior tooth enamel.
+Occlusal wear ([severity]) with loss of vertical dimension. Custom hard acrylic occlusal splint (CDT D9944) prescribed.
+6. Third Molar (Wisdom Tooth) Impaction (5 unique templates)
+Mesioangular 45° impaction on #X impinging on distal cervical root of #Y with external resorption risk.
+Horizontally impacted 90° third molar #X in close proximity to inferior alveolar nerve canal. 3D CBCT recommended.
+Distally angled impacted wisdom tooth #X causing recurrent pericoronal swelling and trismus.
+Complete bony impaction of tooth #X with follicle enlargement (>3mm). Surgical extraction indicated (CDT D7240).
+Partially bony impacted third molar #X with localized operculitis and food entrapment. Extraction indicated (CDT D7230).
+7. Canine / Premolar Impaction (5 unique templates)
+Unerupted permanent canine #X locked palatally in alveolar bone. Closed surgical exposure with gold chain traction.
+Palatally displaced canine #X with apex positioned between lateral incisor and premolar. Surgical exposure planned.
+Impacted maxillary canine #X causing root resorption on adjacent lateral incisor. Orthodontic traction indicated.
+Partially erupted premolar #X with pericoronal soft tissue flap and chronic inflammation. Operculectomy indicated (D7971).
+Ectopic eruption of canine #X into buccal vestibule with insufficient attached keratinized gingiva.
+8. TMJ / Jaw Disorders (7 unique templates)
+Right TMJ anterior disc displacement with reduction; reciprocal opening click and deviation to right on opening.
+Left TMJ internal derangement with audible acoustic click at 25mm opening during condylar translation.
+Acute closed lock of left TMJ with non-reducing anterior disc displacement. Interincisal opening limited to 24mm (Trismus).
+Bilateral TMJ arthralgia with joint tenderness upon lateral pole palpation and masseter hypertonicity.
+Normal TMJ condyle-disc fossa articulation with smooth bilateral excursion and 44mm physiological opening.
+Chronic TMJ clicking progressing to intermittent morning lock. Anterior repositioning splint indicated.
+TMJ crepitus and degenerative condylar head remodeling secondary to long-term nocturnal clenching.
+
+
+
+

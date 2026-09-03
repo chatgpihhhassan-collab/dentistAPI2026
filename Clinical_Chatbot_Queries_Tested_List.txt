@@ -1,0 +1,139 @@
+================================================================================
+LUMINA DENTAL STUDIO - CLINICAL AI CHATBOT & VOICE ASSISTANT
+COMPLETE CATALOG OF TESTED QUERIES & COMMANDS (60+ PATTERNS)
+================================================================================
+
+All queries are connected to live SQL Server database tables and return:
+1. Spoken Audio Voice (Text-to-Speech via Microphone / Speaker)
+2. Interactive Briefing Cards on the Chatbot UI (Dossier, Stats, Schedule, Directory, Suggestions)
+
+--------------------------------------------------------------------------------
+PILLAR 1: PATIENT DOSSIER & COMPREHENSIVE MEDICAL RECORDS (12 Queries)
+--------------------------------------------------------------------------------
+1. Can you pull up everything on Sana?
+   -> Returns: Complete Clinical Dossier Breakdown & Action Chips.
+2. Give me full detail of patient Sana Mudassar
+   -> Returns: Full patient chart summary, healthy/decayed counts, active stage & selected shade.
+3. Pull up Sana
+   -> Returns: Quick dossier briefing for Sana Mudassar (ID #7).
+4. Bring up everything on Tariq
+   -> Returns: Full dossier for Tariq Mehmood.
+5. Show me all about Sana Mudassar
+   -> Returns: Complete clinical briefing.
+6. Who is Sana? / Who is Sana Mudassar?
+   -> Tailored Response: "Doctor, Sana Mudassar is an 18-year-old Female (Patient ID #7) currently enrolled in 'Teeth Whitening'. Target shade is 'Initial: A3.5 ➔ Target: BL2' with healthy teeth charted."
+7. Find patient Sana
+   -> Returns: Patient matching and chart launcher.
+8. Show complete record for Sana Mudassar
+   -> Returns: Clinical records, odontogram summary, and next visit date.
+9. Open dossier for patient 14
+   -> Tailored Response: "Doctor, here is the clinical dossier for Sarah Connor (Patient ID #14)..."
+10. What is the medical history of Sana Mudassar?
+    -> Tailored Response: "Doctor, Sana Mudassar's medical & clinical history includes an active plan for 'Teeth Whitening' (Session 2/3), with Root Canal procedures on Tooth #2, #25, #18, #8 and active caries monitoring on Tooth #18."
+11. Brief me on Tariq Mehmood
+    -> Returns: Executive clinical brief on Tariq.
+12. Get all information regarding patient 7
+    -> Returns: Patient #7 comprehensive dossier card.
+
+--> UI Response: Patient Dossier Card with Demographics, Active Plan, Selected Shade,
+    Healthy/Decayed/RCT teeth breakdown, Next Visit & [Open Chart] Button.
+
+--------------------------------------------------------------------------------
+PILLAR 2: TOOTH-LEVEL DIAGNOSIS, ROOT CANALS, CARIES & PROCEDURES (12 Queries)
+--------------------------------------------------------------------------------
+13. Does Sana Mudassar require root canal?
+    -> Response: "Doctor, Sana Mudassar has Root Canal indicated or recorded on Tooth #2, #25, #18, #8. Their active treatment plan is 'Teeth Whitening' (Session 2/3)."
+14. Sana Mudassar root canal?
+    -> Response: "Doctor, Sana Mudassar has Root Canal indicated or recorded on Tooth #2, #25, #18, #8. Their active treatment plan is 'Teeth Whitening' (Session 2/3)."
+15. When did we do Sana Mudassar root canal?
+    -> Response: "Doctor, Sana Mudassar's Root Canal procedure for Tooth #2, #25, #18, #8 was recorded around 26 Aug 2026 under their active treatment plan 'Teeth Whitening'."
+16. Which teeth of Sana Mudassar are damaged or have caries?
+    -> Response: "Doctor, Sana Mudassar has active caries/decay recorded on Tooth #18."
+17. Does Sana have any cavities?
+    -> Response: "Doctor, Sana Mudassar has active caries/decay recorded on Tooth #18."
+18. Has Sana Mudassar received any fillings or restorations?
+    -> Response: "Doctor, Sana Mudassar currently has no recorded fillings or crown restorations."
+19. Check if Sana Mudassar has missing teeth
+    -> Response: "Doctor, Sana Mudassar has no missing teeth charted (all 32 teeth present)."
+20. What is the active treatment plan for Sana?
+    -> Response: "Doctor, Sana Mudassar is currently enrolled in Teeth Whitening (Session 2/3) with target shade BL2."
+21. What stage of braces is Sana Mudassar on?
+    -> Response: "Doctor, Sana Mudassar is currently on 'Session 2/3' for their Teeth Whitening treatment."
+22. What shade was selected for Sana Mudassar?
+    -> Response: "Doctor, the selected target shade for Sana Mudassar is 'Initial: A3.5 ➔ Target: BL2' (Active Plan: Teeth Whitening)."
+23. When is Sana Mudassar's next appointment?
+    -> Response: "Doctor, the next scheduled appointment for Sana Mudassar is on 26 Aug 2026 at 12:00 PM (Confirmed)."
+24. How old is Sana Mudassar?
+    -> Response: "Doctor, Sana Mudassar is 18 years old (DOB: 01 Jan 2008, Gender: Female)."
+
+--> UI Response: Specific clinical procedure explanation + 32-Teeth chart status + Interactive Dossier Card.
+
+--------------------------------------------------------------------------------
+AUTHENTIC NOT-FOUND & ALTERNATIVE SUGGESTIONS (When patient has no record)
+--------------------------------------------------------------------------------
+Example Query: "Has Alex Morgan received any fillings or restorations?"
+-> AI Response: "Doctor, I could not find a registered patient matching that name in your clinic database. You can search the full registry or check upcoming schedules below:"
+-> UI Response: Interactive Suggestion Action Buttons:
+   [💬 List all my patients ➔]
+   [💬 How many appointments today? ➔]
+   [💬 How many patients have root canal? ➔]
+   [💬 Can you pull up everything on Sana? ➔]
+
+--------------------------------------------------------------------------------
+PILLAR 3: CLINIC-WIDE CLINICAL & ODONTOGRAM STATISTICS (10 Queries)
+--------------------------------------------------------------------------------
+25. How many patients have root canal?
+26. How much patients have root canal
+27. How many patients have damaged teeth?
+28. How much patients have damage teeths
+29. How many patients are on braces?
+30. How many patients have orthodontic treatment?
+31. How many patients have missing teeth?
+32. How many patients completed teeth whitening?
+33. Give me clinical overview of my practice
+34. What is the total number of patients registered in my clinic?
+
+--> UI Response: Clinic Stats Dashboard Card (Root Canal, Caries, Braces, Whitening counters).
+
+--------------------------------------------------------------------------------
+PILLAR 4: APPOINTMENTS, DATES & SCHEDULE LOOKUPS (10 Queries)
+--------------------------------------------------------------------------------
+35. How many appointments today?
+36. How much appointment today
+37. 13 Aug appointment I have or not?
+38. Do I have any appointments on 28 August 2026?
+39. Who is booked for tomorrow?
+40. Show all confirmed appointments
+41. Show all pending appointment requests
+42. What is my schedule for next Monday?
+43. When is Sana Mudassar's next appointment?
+44. Do we have any bookings on 15 September?
+
+--> UI Response: Appointment Schedule Card with times, patient names & status badges.
+
+--------------------------------------------------------------------------------
+PILLAR 5: PATIENT DIRECTORY & FILTERED LISTINGS (8 Queries)
+--------------------------------------------------------------------------------
+45. List all my patients
+46. Show all patients
+47. Show all female patients
+48. Show all male patients
+49. List all orthodontic patients
+50. List all active treatment plan patients
+51. Show cosmetic whitening patients
+52. List recent patients
+
+--> UI Response: Patient Directory Card with click-to-open chart chips.
+
+--------------------------------------------------------------------------------
+PILLAR 6: DIRECT ODONTOGRAM & VOICE CHARTING COMMANDS (5 Commands)
+--------------------------------------------------------------------------------
+53. Tooth number 15 mein kida laga hua hai (Marks Tooth #15 as Decay/Red)
+54. Tooth 8 needs root canal (Marks Tooth #8 as Root Canal/Amber)
+55. Tooth 19 is healthy (Marks Tooth #19 as Healthy/Green)
+56. Tooth 30 is missing (Marks Tooth #30 as Missing/Grey)
+57. Prescribe Amoxicillin 500mg TDS for 5 days (Generates prescription log)
+
+================================================================================
+END OF CATALOG
+================================================================================
