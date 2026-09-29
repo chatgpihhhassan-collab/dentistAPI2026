@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using DentistAPI.Repositories;
 using DentistAPI.Models;
+using DentistAPI.Services;
 
 namespace DentistAPI.Controllers
 {
@@ -24,7 +25,7 @@ namespace DentistAPI.Controllers
         {
             _config = config;
             _repository = repository;
-            ApiKey = config["GEMINI_API_KEY"] ?? "";
+            ApiKey = config["GEMINI_API_KEY"] ?? string.Empty;
             var modelName = config["GEMINI_MODEL"] ?? "gemini-3.6-flash";
             GeminiEndpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent";
         }
@@ -466,11 +467,23 @@ namespace DentistAPI.Controllers
             var requestMsg = new HttpRequestMessage(HttpMethod.Post, GeminiEndpoint);
             requestMsg.Headers.Add("x-goog-api-key", ApiKey);
             requestMsg.Content = content;
+            var startTime = DateTime.Now;
             var response = await client.SendAsync(requestMsg);
+            var endTime = DateTime.Now;
             var responseString = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
+                GeminiCallLogger.LogCall(
+                    callType: "CHATBOT VOICE COMMAND",
+                    endpoint: GeminiEndpoint,
+                    requestPayload: $"[Doctor Voice Command: \"{request.Text}\", Region: {userRegion}]\nPayload:\n{JsonSerializer.Serialize(payload)}",
+                    responseData: responseString,
+                    startTime: startTime,
+                    endTime: endTime,
+                    isSuccess: false,
+                    errorMessage: $"HTTP {response.StatusCode}: {responseString}"
+                );
                 return FallbackRegexParser(request.Text);
             }
 
@@ -491,11 +504,34 @@ namespace DentistAPI.Controllers
                 }
                 textResult = textResult.Replace("```json", "").Replace("```", "").Trim();
                 var parsedJson = JsonSerializer.Deserialize<object>(textResult);
+
+                GeminiCallLogger.LogCall(
+                    callType: "CHATBOT VOICE COMMAND",
+                    endpoint: GeminiEndpoint,
+                    requestPayload: $"[Doctor Voice Command: \"{request.Text}\", Region: {userRegion}]\nPrompt/Payload:\n{JsonSerializer.Serialize(payload)}",
+                    responseData: responseString,
+                    startTime: startTime,
+                    endTime: endTime,
+                    isSuccess: true,
+                    extractedResult: $"Parsed Chatbot JSON Response:\n{textResult}",
+                    additionalNotes: $"Doctor ID: {request.DoctorId}, Patient ID: {request.PatientId}"
+                );
+
                 return Ok(parsedJson);
             }
             catch (System.Exception ex)
             {
                 System.Console.WriteLine($"Gemini parsing failed: {ex.Message}");
+                GeminiCallLogger.LogCall(
+                    callType: "CHATBOT VOICE COMMAND",
+                    endpoint: GeminiEndpoint,
+                    requestPayload: $"[Doctor Voice Command: \"{request.Text}\"]\nPayload:\n{JsonSerializer.Serialize(payload)}",
+                    responseData: responseString,
+                    startTime: startTime,
+                    endTime: endTime,
+                    isSuccess: false,
+                    errorMessage: $"Parsing error: {ex.Message}"
+                );
                 return FallbackRegexParser(request.Text);
             }
         }

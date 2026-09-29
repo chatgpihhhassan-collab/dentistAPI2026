@@ -25,6 +25,7 @@ export const getHexColor = (status) => {
   if (s.includes('ssc') || s.includes('stainless')) return '#64748B';
   if (s.includes('space') || s.includes('maintainer')) return '#93C5FD';
   if (s.includes('fluoride') || s.includes('varnish') || s.includes('sealant')) return '#06B6D4';
+  if (s.includes('clean') || s.includes('scaling') || s.includes('calculus') || s.includes('tartar') || s.includes('plaque') || s.includes('prophylaxis')) return '#3B82F6';
   if (s.includes('strip crown') || s.includes('inlay') || s.includes('onlay') || s.includes('veneer')) return '#3B82F6';
   if (s.includes('bone loss') || s.includes('periodont') || s.includes('furcation') || s.includes('mobility') || s.includes('recession')) return '#E0665A';
   if (s.includes('resorption') || s.includes('cyst') || s.includes('impacted') || s.includes('supernumerary') || s.includes('mesiodens')) return '#8B5CF6';
@@ -274,6 +275,18 @@ export const parseSurfacesFromRecord = (statusStr, commentsStr, customSurfaces =
 
   // 2. Orthodontic Bracket / Class V -> Buccal only
   if (conditionLabel === 'Orthodontic Bracket' || full.includes('class v') || full.includes('cervical')) {
+    result.B = conditionLabel;
+    return result;
+  }
+
+  // 2b. Lingual / Palatal Pit Caries -> Lingual only (Class I cingulum/lingual pit)
+  if (/lingual\s*pit|palatal\s*pit/i.test(s) || /lingual\s*pit|palatal\s*pit/i.test(c)) {
+    result.L = conditionLabel;
+    return result;
+  }
+
+  // 2c. Buccal Pit Caries -> Buccal only
+  if (/buccal\s*pit/i.test(s) || /buccal\s*pit/i.test(c)) {
     result.B = conditionLabel;
     return result;
   }

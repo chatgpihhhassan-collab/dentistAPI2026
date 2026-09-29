@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-  FileText, Activity, Layers, CheckCircle2, Stethoscope, RotateCcw, Sparkles
+  FileText, Activity, Layers, CheckCircle2, Stethoscope, RotateCcw, Sparkles, X
 } from 'lucide-react';
 import { handlePrintCompletePatientReport } from '../utils/printReportUtils';
 import { 
@@ -25,6 +25,9 @@ import ToothMultiSurfaceMatrix from '../components/toothDetail/ToothMultiSurface
 import ToothClinicalOverview from '../components/toothDetail/ToothClinicalOverview';
 import ToothDentitionGuardModal from '../components/toothDetail/ToothDentitionGuardModal';
 import OrthoTmjDiagnosticSuite from '../components/orthoTmjSuite/OrthoTmjDiagnosticSuite';
+import ImplantPlanningModal from '../components/clinicalSpecialties/ImplantPlanningModal';
+import BiopsyPathologyModal from '../components/clinicalSpecialties/BiopsyPathologyModal';
+import ClearAlignerModal from '../components/clinicalSpecialties/ClearAlignerModal';
 
 // Re-export for compatibility with other pages
 export { parseSurfacesFromRecord, calculatePatientAge, TOOTH_NAMES, PEDIATRIC_TOOTH_NAMES };
@@ -41,6 +44,11 @@ export default function ToothDetailPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState({ visible: false, message: '' });
   const [showGuardModal, setShowGuardModal] = useState(false);
+  const [liveOrthoAssessment, setLiveOrthoAssessment] = useState(null);
+  const [showImplantModal, setShowImplantModal] = useState(false);
+  const [showBiopsyModal, setShowBiopsyModal] = useState(false);
+  const [showAlignerModal, setShowAlignerModal] = useState(false);
+  const [specialtyRefreshTrigger, setSpecialtyRefreshTrigger] = useState(0);
 
   // Surface Matrix State
   const [surfaceData, setSurfaceData] = useState({
@@ -195,31 +203,147 @@ export default function ToothDetailPage() {
       setActivePaletteItem('GIC');
     } else if (full.includes('composite') || full.includes('resin') || full.includes('broken')) {
       setActivePaletteItem('Composite');
-    } else if (full.includes('caries (mod)') || full.includes('mod')) {
+    } else if (full.includes('caries (mod)') || full.includes('— mod') || (full.includes('mod') && (full.includes('caries') || full.includes('decay') || full.includes('cavitation')))) {
       setActivePaletteItem('Caries (MOD)');
-    } else if (full.includes('caries (do)') || full.includes('do')) {
+    } else if (full.includes('caries (mo)') || full.includes('— mo') || full.includes('mesio-occlusal')) {
+      setActivePaletteItem('Caries (MO)');
+    } else if (full.includes('caries (do)') || full.includes('— do') || full.includes('disto-occlusal')) {
       setActivePaletteItem('Caries (DO)');
+    } else if (full.includes('class v') || full.includes('cervical')) {
+      setActivePaletteItem('Caries (Class V)');
+    } else if (full.includes('lingual pit') || full.includes('palatal pit')) {
+      setActivePaletteItem('Caries (Lingual Pit)');
     } else if (full.includes('caries (o)') || full.includes('caries') || full.includes('decay') || full.includes('cavity') || full.includes('ecc') || full.includes('damaged')) {
       setActivePaletteItem('Caries (O)');
-    } else if (s === 'healthy' || s === 'sound' || s.includes('cleaning') || (!toothData.status && !toothData.comments)) {
+    } else if (s === 'healthy' || s === 'sound' || (!toothData.status && !toothData.comments)) {
       setActivePaletteItem('Healthy');
+    } else if (s.includes('cleaning') || s.includes('scaling') || s.includes('calculus') || s.includes('tartar') || s.includes('plaque') || s.includes('prophylaxis')) {
+      setActivePaletteItem('Cleaning Needed');
     } else {
       setActivePaletteItem(toothData.status || 'Healthy');
     }
   }, [toothData, tKey, patientId]);
 
-  // Fetch Patient & Accurate Teeth Data from API
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      const pid = parseInt(patientId) || 17;
+  // Helper to extract and format specific tooth record from in-memory chart
+  const applyToothSelection = (teethArray, targetKey, pid) => {
+    const isPed = typeof targetKey === 'string' && isNaN(parseInt(targetKey, 10));
+    const tNumeric = parseInt(targetKey, 10) || 1;
+    const PEDIATRIC_KEYS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T'];
+    const pIdx = PEDIATRIC_KEYS.indexOf(String(targetKey).toUpperCase());
 
-      // 1. Fetch Patient Profile
+    const current = (teethArray || []).find(t => {
+      const cat = (t.dentitionCategory || t.DentitionCategory || 'Adult').trim().toLowerCase();
+      const tk = String(t.toothKey || t.ToothKey || '').trim().toUpperCase();
+      const tn = String(t.toothNumber ?? t.ToothNumber ?? '').trim().toUpperCase();
+
+      if (isPed) {
+        if (cat === 'pediatric') {
+          return tk === String(targetKey).toUpperCase() || (pIdx >= 0 && parseInt(tn, 10) === (pIdx + 1));
+        }
+        return tk === String(targetKey).toUpperCase();
+      } else {
+        if (cat === 'adult') {
+          return tk === String(targetKey).toUpperCase() || parseInt(tn, 10) === tNumeric;
+        }
+        return !/^[A-T]$/i.test(tk) && parseInt(tn, 10) === tNumeric;
+      }
+    });
+
+    if (current) {
+      let status = current.conditionStatus || current.status || 'Healthy';
+      if (status.includes('All 5 Surfaces') && status.includes('All 5 Surfaces (MODBL) — All 5 Surfaces')) {
+        const base = status.split('—')[0].trim() || 'Healthy Enamel';
+        status = `${base} — All 5 Surfaces (MODBL)`;
+      }
+      let comments = current.comments || current.Comments || current.comment || (isPed ? `Intact primary deciduous enamel, physiological baseline` : 'Intact enamel, physiological mobility (Grade 0)');
+      if (comments.includes('All 5 Surfaces (MODBL) — All 5 Surfaces')) {
+        comments = `Clinical diagnosis: ${status} recorded on ${isPed ? `Primary Tooth ${targetKey}` : `Tooth #${tNumeric}`} via 5-Zone Odontogram`;
+      }
+      const color = current.conditionColor || current.color || getHexColor(status);
+      const rotationDeg = current.rotationDeg || 0;
+
+      setToothData({
+        toothNumber: targetKey,
+        status,
+        comments,
+        comment: comments,
+        color,
+        rotationDeg,
+        isPediatric: isPed
+      });
+      setEditingNotes(comments);
+
+      // Restore persistent surface zones from localStorage or derive from status
       try {
-        const pRes = await fetch(`http://localhost:5107/api/patients/${pid}`);
-        if (pRes.ok) {
-          const pData = await pRes.json();
+        const savedZones = localStorage.getItem(`dentist_surface_zones_patient_${pid}_tooth_${targetKey}`);
+        if (savedZones) {
+          setSurfaceData(JSON.parse(savedZones));
+        } else if (status.includes('MODBL') || status.includes('All 5 Surfaces')) {
+          const base = status.split('—')[0].trim() || 'Healthy';
+          setSurfaceData({ O: base, M: base, D: base, B: base, L: base });
+        } else {
+          setSurfaceData({ O: 'Healthy', M: 'Healthy', D: 'Healthy', B: 'Healthy', L: 'Healthy' });
+        }
+      } catch (e) {
+        setSurfaceData({ O: 'Healthy', M: 'Healthy', D: 'Healthy', B: 'Healthy', L: 'Healthy' });
+      }
+    } else {
+      const defaultComments = isPed ? `Intact primary deciduous enamel on Tooth ${targetKey}` : `Intact enamel on Tooth #${tNumeric}`;
+      setToothData({
+        toothNumber: targetKey,
+        status: 'Healthy',
+        comments: defaultComments,
+        comment: defaultComments,
+        color: '#10B981',
+        rotationDeg: 0,
+        isPediatric: isPed
+      });
+      setEditingNotes(defaultComments);
+      setSurfaceData({ O: 'Healthy', M: 'Healthy', D: 'Healthy', B: 'Healthy', L: 'Healthy' });
+    }
+  };
+
+  // Fetch Patient & Accurate Teeth Data from API (Parallelized & Cached)
+  const lastLoadedPatientIdRef = React.useRef(null);
+
+  useEffect(() => {
+    const pid = parseInt(patientId) || 17;
+
+    // Fast Path: If patient and teeth chart are already in memory, switch tooth in 0ms!
+    if (patient && lastLoadedPatientIdRef.current === pid && allTeeth && allTeeth.length > 0) {
+      applyToothSelection(allTeeth, tKey, pid);
+      return;
+    }
+
+    // Initial / Full Fetch Path: Fetch profile, teeth chart, and diagnostic assessments concurrently
+    let isCancelled = false;
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        console.log(`🧭 [ToothDetailPage:TMJ] Starting parallel load for Patient #${pid}, tooth: ${tKey}`);
+
+        const [pRes, teethRes, diagRes] = await Promise.all([
+          fetch(`/api/patients/${pid}`).catch(err => {
+            console.error("[ToothDetailPage] Patient fetch error:", err);
+            return null;
+          }),
+          fetch(`/api/patients/${pid}/chart`).catch(err => {
+            console.error("[ToothDetailPage] Chart fetch error:", err);
+            return null;
+          }),
+          fetch(`/api/patients/${pid}/diagnostic-assessment`).catch(err => {
+            console.warn("[ToothDetailPage:TMJ] Diagnostic assessment fetch error:", err);
+            return null;
+          })
+        ]);
+
+        if (isCancelled) return;
+
+        let pData = null;
+        if (pRes && pRes.ok) {
+          pData = await pRes.json();
           setPatient(pData);
+          lastLoadedPatientIdRef.current = pid;
 
           // If no tooth specified in URL, redirect to default
           if (!toothNumber) {
@@ -231,104 +355,190 @@ export default function ToothDetailPage() {
             return;
           }
         }
-      } catch (pErr) {
-        console.error("[ToothDetailPage] Patient fetch error:", pErr);
-      }
 
-      // 2. Fetch Complete Odontogram Teeth Chart
-      try {
-        const teethRes = await fetch(`http://localhost:5107/api/patients/${pid}/chart`);
-        if (teethRes.ok) {
-          const teethArray = await teethRes.json();
-          setAllTeeth(teethArray || []);
-
-          const PEDIATRIC_KEYS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T'];
-          const pIdx = PEDIATRIC_KEYS.indexOf(String(tKey).toUpperCase());
-
-          const current = (teethArray || []).find(t => {
-            const cat = (t.dentitionCategory || t.DentitionCategory || 'Adult').trim().toLowerCase();
-            const tk = String(t.toothKey || t.ToothKey || '').trim().toUpperCase();
-            const tn = String(t.toothNumber ?? t.ToothNumber ?? '').trim().toUpperCase();
-
-            if (isPediatric) {
-              if (cat === 'pediatric') {
-                return tk === String(tKey).toUpperCase() || (pIdx >= 0 && parseInt(tn, 10) === (pIdx + 1));
-              }
-              return tk === String(tKey).toUpperCase();
-            } else {
-              if (cat === 'adult') {
-                return tk === String(tKey).toUpperCase() || parseInt(tn, 10) === tNum;
-              }
-              return !/^[A-T]$/i.test(tk) && parseInt(tn, 10) === tNum;
-            }
-          });
-
-          if (current) {
-            let status = current.conditionStatus || current.status || 'Healthy';
-            if (status.includes('All 5 Surfaces') && status.includes('All 5 Surfaces (MODBL) — All 5 Surfaces')) {
-              const base = status.split('—')[0].trim() || 'Healthy Enamel';
-              status = `${base} — All 5 Surfaces (MODBL)`;
-            }
-            let comments = current.comments || current.Comments || current.comment || (isPediatric ? `Intact primary deciduous enamel, physiological baseline` : 'Intact enamel, physiological mobility (Grade 0)');
-            if (comments.includes('All 5 Surfaces (MODBL) — All 5 Surfaces')) {
-              comments = `Clinical diagnosis: ${status} recorded on ${isPediatric ? `Primary Tooth ${tKey}` : `Tooth #${tNum}`} via 5-Zone Odontogram`;
-            }
-            const color = current.conditionColor || current.color || getHexColor(status);
-            const rotationDeg = current.rotationDeg || 0;
-
-            setToothData({
-              toothNumber: tKey,
-              status,
-              comments,
-              comment: comments,
-              color,
-              rotationDeg,
-              isPediatric
-            });
-            setEditingNotes(comments);
-
-            // Restore persistent surface zones from localStorage or derive from status
-            try {
-              const savedZones = localStorage.getItem(`dentist_surface_zones_patient_${pid}_tooth_${tKey}`);
-              if (savedZones) {
-                setSurfaceData(JSON.parse(savedZones));
-              } else if (status.includes('MODBL') || status.includes('All 5 Surfaces')) {
-                const base = status.split('—')[0].trim() || 'Healthy';
-                setSurfaceData({ O: base, M: base, D: base, B: base, L: base });
-              } else {
-                setSurfaceData({ O: 'Healthy', M: 'Healthy', D: 'Healthy', B: 'Healthy', L: 'Healthy' });
-              }
-            } catch (e) {
-              setSurfaceData({ O: 'Healthy', M: 'Healthy', D: 'Healthy', B: 'Healthy', L: 'Healthy' });
-            }
-          } else {
-            const defaultComments = isPediatric ? `Intact primary deciduous enamel on Tooth ${tKey}` : `Intact enamel on Tooth #${tNum}`;
-            setToothData({
-              toothNumber: tKey,
-              status: 'Healthy',
-              comments: defaultComments,
-              comment: defaultComments,
-              color: '#10B981',
-              rotationDeg: 0,
-              isPediatric
-            });
-            setEditingNotes(defaultComments);
-            setSurfaceData({ O: 'Healthy', M: 'Healthy', D: 'Healthy', B: 'Healthy', L: 'Healthy' });
-          }
+        let teethArray = [];
+        let safeArray = [];
+        if (teethRes && teethRes.ok) {
+          teethArray = await teethRes.json();
+          safeArray = Array.isArray(teethArray) ? teethArray : [];
+          setAllTeeth(safeArray);
+          applyToothSelection(safeArray, tKey, pid);
+        } else {
+          applyToothSelection([], tKey, pid);
         }
-      } catch (tErr) {
-        console.error("[ToothDetailPage] Teeth chart fetch error:", tErr);
-      }
-    } catch (err) {
-      console.error("[ToothDetailPage] General fetch error:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  useEffect(() => {
-    fetchData();
+        // --- Restore Diagnostic Suite (TMJ, Occlusion, Impactions) from DB Table or Teeth Chart ---
+        try {
+          let preloadedAssessment = null;
+
+          // Tier 1: Check patient-level DiagnosticAssessments table
+          if (diagRes && diagRes.ok && diagRes.status !== 204) {
+            try {
+              const diagRecord = await diagRes.json();
+              if (diagRecord && diagRecord.assessmentJson) {
+                preloadedAssessment = typeof diagRecord.assessmentJson === 'string'
+                  ? JSON.parse(diagRecord.assessmentJson)
+                  : diagRecord.assessmentJson;
+                console.log(`📋 [ToothDetailPage:TMJ] Diagnostic Suite Record Loaded from DB Table for Patient #${pid}:`, preloadedAssessment);
+              }
+            } catch (jsonErr) {
+              console.warn("[ToothDetailPage:TMJ] Error parsing DB diagnostic assessment JSON:", jsonErr);
+            }
+          }
+
+          // Tier 2: If not in DiagnosticAssessments table or missing, detect from teeth chart records
+          if (!preloadedAssessment || !preloadedAssessment.suite_category) {
+            let detectedAssessment = null;
+
+            // 1. Check for Occlusion / Deep Overbite
+            const overbiteRecord = safeArray.find(t => {
+              const stat = (t.conditionStatus || t.ConditionStatus || t.status || t.Status || '');
+              const comm = (t.comments || t.Comments || t.comment || t.Comment || '');
+              return /DEEP OVERBITE/i.test(stat) || (/overbite/i.test(stat) && /overlap/i.test(comm));
+            });
+            if (overbiteRecord) {
+              const comm = (overbiteRecord.comments || overbiteRecord.Comments || overbiteRecord.comment || overbiteRecord.Comment || '');
+              const match = comm.match(/(\d{1,3})%\s*overlap/i);
+              const pct = match ? parseInt(match[1], 10) : 70;
+              detectedAssessment = {
+                suite_category: 'occlusion',
+                bite_type: 'overbite',
+                overbite_percent: pct,
+                cdt_code: 'D8080',
+                clinical_indication: `Deep overbite: ${pct}% overlap. Orthodontic leveling indicated.`
+              };
+            }
+
+            // 2. Check for TMJ Articulation
+            if (!detectedAssessment) {
+              const tmjRecord = safeArray.find(t => {
+                const comm = (t.comments || t.Comments || t.comment || t.Comment || '');
+                const stat = (t.conditionStatus || t.ConditionStatus || t.status || t.Status || '');
+                return /TMJ Articulation|TMJ Closed Lock|TMJ Disc Reduction|Trismus/i.test(comm) || /TMJ/i.test(stat);
+              });
+              if (tmjRecord) {
+                const comm = (tmjRecord.comments || tmjRecord.Comments || tmjRecord.comment || tmjRecord.Comment || '');
+                const stat = (tmjRecord.conditionStatus || tmjRecord.ConditionStatus || tmjRecord.status || tmjRecord.Status || '');
+                let detectedState = 'normal';
+                if (/closed.?lock|trismus/i.test(stat) || /closed.?lock|trismus/i.test(comm)) {
+                  detectedState = 'closed_lock';
+                } else if (/click|reduction/i.test(stat) || /click|reduction/i.test(comm)) {
+                  detectedState = 'clicking';
+                }
+
+                let detectedOpening = 42.0;
+                const openMatch = comm.match(/Opening:\s*([\d\.]+)mm/i);
+                if (openMatch) {
+                  detectedOpening = parseFloat(openMatch[1]);
+                } else if (detectedState === 'closed_lock') {
+                  detectedOpening = 24.0;
+                } else if (detectedState === 'clicking') {
+                  detectedOpening = 35.0;
+                }
+
+                detectedAssessment = {
+                  suite_category: 'tmj',
+                  tmj_state: detectedState,
+                  mouth_opening_mm: detectedOpening,
+                  cdt_code: detectedState === 'normal' ? 'D0140' : 'D7880'
+                };
+                console.log(`🦴 [ToothDetailPage:TMJ] Detected TMJ diagnosis from teeth chart:`, detectedAssessment);
+              }
+            }
+
+            // 3. Check for Impactions
+            if (!detectedAssessment) {
+              const impactionRecord = safeArray.find(t => /Impacted|Trapped Canine|Erupted Premolar/i.test(t.conditionStatus || t.ConditionStatus || t.status || t.Status || ''));
+              if (impactionRecord) {
+                const stat = (impactionRecord.conditionStatus || impactionRecord.ConditionStatus || impactionRecord.status || impactionRecord.Status || '');
+                const comm = (impactionRecord.comments || impactionRecord.Comments || impactionRecord.comment || impactionRecord.Comment || '');
+                const isHorizontal = /Horizontal/i.test(stat) || /Horizontal/i.test(comm);
+                const isCanine = /Canine/i.test(stat) || /Canine/i.test(comm);
+                const isPremolar = /Premolar/i.test(stat) || /Premolar/i.test(comm);
+                const impType = isHorizontal ? 'horizontal' : isCanine ? 'canine' : isPremolar ? 'premolar' : 'mesioangular';
+                const degMatch = comm.match(/(\d{1,3})°/);
+                const angDeg = degMatch ? parseInt(degMatch[1], 10) : (isHorizontal ? 90 : isCanine ? 35 : 45);
+                detectedAssessment = {
+                  suite_category: 'impactions',
+                  impaction_type: impType,
+                  angulation_degrees: angDeg,
+                  canine_angulation: isCanine ? angDeg : 35,
+                  cdt_code: isHorizontal ? 'D7240' : isCanine ? 'D7280' : isPremolar ? 'D7220' : 'D7230'
+                };
+              }
+            }
+
+            // Tier 3: LocalStorage fallback cache
+            if (!detectedAssessment) {
+              try {
+                const cached = localStorage.getItem(`dentia_diagnostic_assessment_${pid}`);
+                if (cached) {
+                  detectedAssessment = JSON.parse(cached);
+                  console.log(`💾 [ToothDetailPage:TMJ] Restored from LocalStorage Cache for Patient #${pid}:`, detectedAssessment);
+                }
+              } catch (e) {}
+            }
+
+            if (detectedAssessment) {
+              preloadedAssessment = detectedAssessment;
+            }
+          }
+
+          if (preloadedAssessment) {
+            setLiveOrthoAssessment(preloadedAssessment);
+            try {
+              localStorage.setItem(`dentia_diagnostic_assessment_${pid}`, JSON.stringify(preloadedAssessment));
+            } catch (e) {}
+            console.log(`✅ [ToothDetailPage:TMJ] Live diagnostic assessment set to:`, preloadedAssessment);
+          }
+        } catch (diagLoadErr) {
+          console.warn("[ToothDetailPage:TMJ] Error loading diagnostic assessment:", diagLoadErr);
+        }
+      } catch (err) {
+        console.error("[ToothDetailPage] General fetch error:", err);
+      } finally {
+        if (!isCancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadData();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [patientId, toothNumber]);
+
+  const orthoSaveTimeoutRef = React.useRef(null);
+  const pendingOrthoSaveRef = React.useRef(null);
+
+  // Flush pending debounced saves immediately when switching teeth
+  useEffect(() => {
+    if (pendingOrthoSaveRef.current) {
+      const doSave = pendingOrthoSaveRef.current;
+      pendingOrthoSaveRef.current = null;
+      if (orthoSaveTimeoutRef.current) {
+        clearTimeout(orthoSaveTimeoutRef.current);
+        orthoSaveTimeoutRef.current = null;
+      }
+      doSave();
+    }
+  }, [tKey, toothNumber]);
+
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingOrthoSaveRef.current) {
+        pendingOrthoSaveRef.current();
+        pendingOrthoSaveRef.current = null;
+      }
+      if (orthoSaveTimeoutRef.current) {
+        clearTimeout(orthoSaveTimeoutRef.current);
+        orthoSaveTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   // Handle Save / Update Observation
   const handleSaveObservation = async (newStatus, newComment, newColor, customSurfaces = null) => {
@@ -341,7 +551,7 @@ export default function ToothDetailPage() {
       const surfacesToSave = customSurfaces || surfaceData;
 
       const doctorData = JSON.parse(localStorage.getItem('doctor') || '{}');
-      const docId = doctorData.doctorID || doctorData.DoctorID || 1;
+      const docId = doctorData.doctorID || doctorData.DoctorID || 2;
 
       const updates = [{
         toothNumber: isPediatric ? tKey : tNum,
@@ -356,7 +566,7 @@ export default function ToothDetailPage() {
       }];
 
       // 1. Bulk Update API to persist in SQL Server TeethState table
-      const res = await fetch('http://localhost:5107/api/patients/teeth/update-bulk', {
+      const res = await fetch('/api/patients/teeth/update-bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -367,17 +577,17 @@ export default function ToothDetailPage() {
 
       // 2. Clinical Log entry to persist in Patient Clinical History
       try {
-        await fetch(`http://localhost:5107/api/patients/${pid}/clinical-logs`, {
+        await fetch(`/api/patients/${pid}/clinical-logs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            doctorID: docId,
+            doctorId: docId,
             message: `Tooth ${isPediatric ? `Primary ${tKey}` : `#${tNum}`} Diagnosis: ${statusToSave}. ${commentToSave}`,
             logType: 'ToothObservation'
           })
-        });
+        }).catch(() => {});
       } catch (logErr) {
-        console.warn("[ToothDetailPage] Clinical log save warning:", logErr);
+        // Safe fallback
       }
 
       if (res.ok) {
@@ -390,28 +600,40 @@ export default function ToothDetailPage() {
           color: colorToSave
         }));
 
-        // Update allTeeth in memory so odontogram arch navigator syncs immediately
+        // Update allTeeth in memory with robust UPSERT so odontogram arch navigator syncs immediately
         setAllTeeth(prevTeeth => {
-          return (prevTeeth || []).map(t => {
+          const nextList = Array.isArray(prevTeeth) ? [...prevTeeth] : [];
+          const itemStr = String(tKey).trim().toUpperCase();
+          const itemNum = parseInt(tKey, 10) || tNum;
+          const idx = nextList.findIndex(t => {
             const tk = String(t.toothKey || t.ToothKey || '').trim().toUpperCase();
             const tn = String(t.toothNumber ?? t.ToothNumber ?? '').trim().toUpperCase();
-            const isMatch = isPediatric 
-              ? (tk === String(tKey).toUpperCase())
-              : (tk === String(tKey).toUpperCase() || parseInt(tn, 10) === tNum);
-            
-            if (isMatch) {
-              return {
-                ...t,
-                status: statusToSave,
-                conditionStatus: statusToSave,
-                color: colorToSave,
-                conditionColor: colorToSave,
-                comment: commentToSave,
-                comments: commentToSave
-              };
-            }
-            return t;
+            return isPediatric
+              ? tk === itemStr
+              : (tk === itemStr || (!isNaN(itemNum) && parseInt(tn, 10) === itemNum));
           });
+
+          const toothRecord = {
+            patientId: pid,
+            toothNumber: isPediatric ? itemStr : itemNum,
+            toothKey: String(tKey),
+            dentitionCategory: isPediatric ? 'Pediatric' : 'Adult',
+            status: statusToSave,
+            conditionStatus: statusToSave,
+            condition: statusToSave,
+            color: colorToSave,
+            conditionColor: colorToSave,
+            comment: commentToSave,
+            comments: commentToSave,
+            updatedAt: new Date().toISOString()
+          };
+
+          if (idx >= 0) {
+            nextList[idx] = { ...nextList[idx], ...toothRecord };
+          } else {
+            nextList.push(toothRecord);
+          }
+          return nextList;
         });
 
         // Persist surface zones to localStorage
@@ -492,50 +714,250 @@ export default function ToothDetailPage() {
     handleSaveObservation('Healthy', isPediatric ? `Intact primary deciduous enamel on Tooth ${tKey}` : 'Intact anatomical enamel, sound baseline', '#10B981', updated);
   };
 
-  // Ortho & TMJ Diagnostic Assessment Handler
-  const handleSaveOrthoTmjAssessment = (assessment) => {
-    if (!assessment) return;
-    const { suite_category, type, bite_type, tmj_state, impaction_type, overjet_mm, open_bite_gap_mm, mouth_opening_mm, angulation_degrees, cdt_code } = assessment;
-    
-    let statusLabel = 'Ortho Malocclusion';
-    let commentText = 'Orthodontic / TMJ diagnostic observation';
-    let conditionColor = '#3B82F6';
+  // Ortho & TMJ Diagnostic Assessment Handler (Synchronized across all teeth and patient DB table)
+  const handleSaveOrthoTmjAssessment = (assessmentData) => {
+    if (!assessmentData) return;
+    // Auto-save disabled for Ortho & TMJ Diagnostic Suite: only commit to chart and DB on explicit manual save
+    if (!assessmentData.isManualSave) {
+      console.log('ℹ️ [ToothDetailPage:OrthoTMJ] Auto-save disabled for Ortho & TMJ Diagnostic Suite. Manual save required.');
+      return;
+    }
+    const { 
+      suite_category, bite_type, impaction_type, tmj_state, cdt_code, 
+      overbite_percent, overjet_mm, open_bite_gap_mm, crossbite_side, wear_severity, 
+      angulation_degrees, canine_angulation, nerve_distance_mm, eruption_percent, mouth_opening_mm 
+    } = assessmentData;
 
-    const bType = bite_type || type;
-    if (suite_category === 'tmj' || tmj_state) {
-      statusLabel = tmj_state === 'closed_lock' ? 'TMJ Closed Lock / Trismus' : tmj_state === 'clicking' ? 'TMJ Disc Reduction (Clicking)' : 'Normal TMJ Articulation';
-      conditionColor = tmj_state === 'closed_lock' ? '#EF4444' : tmj_state === 'clicking' ? '#F59E0B' : '#10B981';
-      commentText = `TMJ Articulation: ${statusLabel} (Opening: ${mouth_opening_mm ?? 42}mm) (CDT ${cdt_code || 'D7880'}).`;
-    } else if (suite_category === 'occlusion' || bType) {
-      if (bType === 'class2') {
-        statusLabel = 'Ortho Malocclusion — OVERBITE (Class II)';
-        conditionColor = '#3B82F6';
-        commentText = `Deep overbite with ${overjet_mm ?? 6.0}mm excessive overjet (CDT D8080).`;
-      } else if (bType === 'class3') {
-        statusLabel = 'Ortho Malocclusion — UNDERBITE (Class III)';
-        conditionColor = '#8B5CF6';
-        commentText = `Mandibular prognathism (Class III malocclusion) (CDT D8080).`;
-      } else if (bType === 'crossbite') {
+    const pid = parseInt(patientId) || (patient?.patientID ? parseInt(patient.patientID) : 30);
+    const categoryKey = suite_category || (bite_type ? 'occlusion' : impaction_type ? 'impactions' : 'tmj');
+
+    console.log(`💾 [ToothDetailPage:TMJ] Saving Diagnostic Assessment for Patient #${pid} (${categoryKey}):`, assessmentData);
+
+    // Merge with previous assessment so all suites (Occlusion, Impactions, TMJ) coexist without overwriting each other
+    let mergedAssessment = { ...assessmentData, suite_category: categoryKey };
+    setLiveOrthoAssessment(prev => {
+      const merged = {
+        ...(prev || {}),
+        ...assessmentData,
+        suite_category: categoryKey,
+        [categoryKey]: assessmentData
+      };
+      mergedAssessment = merged;
+      try {
+        localStorage.setItem(`dentia_diagnostic_assessment_${pid}`, JSON.stringify(merged));
+      } catch (e) {}
+      return merged;
+    });
+
+    const isPatientPediatric = (patient?.dentitionType || '').toLowerCase().includes('pediatric') || isPediatric;
+    let targetTeeth = [];
+    let statusLabel = 'Ortho Malocclusion';
+    let conditionColor = '#2563EB';
+    let commentText = `Assessment saved (${cdt_code || 'D8080'})`;
+
+    // 1. Occlusion Suite
+    if (categoryKey === 'occlusion' || bite_type) {
+      const type = bite_type || 'overbite';
+      if (type === 'overbite') {
+        targetTeeth = isPatientPediatric ? ['D', 'E', 'F', 'G', 'N', 'O', 'P', 'Q'] : [7, 8, 9, 10, 23, 24, 25, 26];
+        statusLabel = 'Ortho Malocclusion — DEEP OVERBITE';
+        conditionColor = '#2563EB';
+        commentText = `Deep overbite: ${overbite_percent ?? 50}% overlap. Orthodontic leveling indicated (CDT D8080).`;
+      } else if (type === 'underbite') {
+        targetTeeth = isPatientPediatric ? ['D', 'E', 'F', 'G', 'N', 'O', 'P', 'Q'] : [7, 8, 9, 10, 23, 24, 25, 26];
+        statusLabel = 'Ortho Malocclusion — CLASS III UNDERBITE';
+        conditionColor = '#EF4444';
+        commentText = `Class III underbite: ${overjet_mm ?? -3.5}mm negative overjet (CDT D8080).`;
+      } else if (type === 'crossbite') {
+        targetTeeth = isPatientPediatric ? ['B', 'I', 'L', 'S'] : [3, 14, 19, 30];
         statusLabel = 'Ortho Malocclusion — CROSSBITE';
-        conditionColor = '#06B6D4';
-        commentText = `Posterior/anterior arch crossbite discrepancy (CDT D8080).`;
-      } else if (bType === 'openbite') {
+        conditionColor = '#F59E0B';
+        commentText = `Posterior crossbite (${crossbite_side || 'right'}). RPE expander indicated (CDT D8080).`;
+      } else if (type === 'openbite') {
+        targetTeeth = isPatientPediatric ? ['D', 'E', 'F', 'G', 'N', 'O', 'P', 'Q'] : [7, 8, 9, 10, 23, 24, 25, 26];
         statusLabel = 'Ortho Malocclusion — OPEN BITE';
         conditionColor = '#EC4899';
         commentText = `Anterior vertical open bite: ${open_bite_gap_mm ?? 4.0}mm gap (CDT D8080).`;
-      } else if (bType === 'molarwear') {
+      } else if (type === 'molarwear') {
+        targetTeeth = isPatientPediatric ? ['A', 'B', 'I', 'J', 'K', 'L', 'S', 'T'] : [2, 3, 14, 15, 18, 19, 30, 31];
         statusLabel = 'Bruxism — OCCLUSAL ATTRITION';
         conditionColor = '#D97706';
-        commentText = `Severe bruxism wear facets. Nightguard indicated (CDT D9944).`;
+        commentText = `Severe bruxism wear facets (${wear_severity || 'moderate'}). Nightguard indicated (CDT D9944).`;
       }
-    } else if (suite_category === 'impactions' || impaction_type) {
+    }
+    // 2. Impaction Suite
+    else if (categoryKey === 'impactions' || impaction_type) {
       const impType = impaction_type || 'mesioangular';
-      statusLabel = impType === 'horizontal' ? 'Impacted 3rd Molar (Horizontal 90°)' : 'Impacted 3rd Molar (Mesioangular 45°)';
-      conditionColor = '#7C3AED';
-      commentText = `Impacted tooth (${angulation_degrees ?? 45}° angulation) (CDT D7230).`;
+      if (impType === 'mesioangular' || impType === 'horizontal') {
+        targetTeeth = isPatientPediatric ? ['A', 'J', 'K', 'T'] : [17, 32];
+        statusLabel = impType === 'horizontal' ? 'Impacted Tooth (Horizontal 90°)' : `Impacted Tooth (Mesioangular ${angulation_degrees ?? 45}°)`;
+        conditionColor = '#7C3AED';
+        commentText = impType === 'horizontal' ? `Horizontally impacted tooth (IAN distance: ${nerve_distance_mm ?? 0.5}mm) (CDT D7240).` : `Mesioangular ${angulation_degrees ?? 45}° impacted tooth (CDT D7230).`;
+      } else if (impType === 'canine') {
+        targetTeeth = isPatientPediatric ? ['C', 'H'] : [6, 11];
+        statusLabel = 'Palatally Impacted Canine';
+        conditionColor = '#DC2626';
+        commentText = `Palatally trapped canine (${canine_angulation ?? angulation_degrees ?? 35}°). Surgical exposure & gold chain (CDT D7280).`;
+      } else if (impType === 'premolar') {
+        targetTeeth = isPatientPediatric ? ['B', 'I', 'L', 'S'] : [20, 29];
+        statusLabel = 'Partially Erupted Premolar';
+        conditionColor = '#BE123C';
+        commentText = `Partially erupted premolar (${eruption_percent ?? 35}% emergence). Operculectomy (CDT D7220/D7971).`;
+      }
+    }
+    // 3. TMJ Suite
+    else if (categoryKey === 'tmj' || tmj_state) {
+      targetTeeth = isPatientPediatric ? ['A', 'J', 'K', 'T'] : [1, 16, 17, 32];
+      statusLabel = tmj_state === 'closed_lock' ? 'TMJ Closed Lock / Trismus' : tmj_state === 'clicking' ? 'TMJ Disc Reduction (Clicking)' : 'Normal TMJ Articulation';
+      conditionColor = tmj_state === 'closed_lock' ? '#EF4444' : tmj_state === 'clicking' ? '#F59E0B' : '#10B981';
+      commentText = `TMJ Articulation: ${statusLabel} (Opening: ${mouth_opening_mm ?? 42}mm) (CDT ${cdt_code || 'D7880'}).`;
     }
 
-    handleSaveObservation(statusLabel, commentText, conditionColor);
+    // Crucial: ALWAYS include the current active tooth so the tooth currently open in the editor is immediately updated!
+    const activeCurrentTooth = isPatientPediatric ? String(tKey).toUpperCase() : (parseInt(tKey, 10) || tNum);
+    if (activeCurrentTooth && !targetTeeth.some(x => String(x).toUpperCase() === String(activeCurrentTooth).toUpperCase())) {
+      targetTeeth.unshift(activeCurrentTooth);
+    }
+
+    // Step A: Update all teeth in local state immediately (with robust UPSERT)
+    setAllTeeth(prev => {
+      const nextList = Array.isArray(prev) ? [...prev] : [];
+      targetTeeth.forEach(toothItem => {
+        const itemStr = String(toothItem).trim().toUpperCase();
+        const itemNum = parseInt(toothItem, 10);
+        const idx = nextList.findIndex(t => {
+          const tk = String(t.toothKey || t.ToothKey || '').trim().toUpperCase();
+          const tn = String(t.toothNumber ?? t.ToothNumber ?? '').trim().toUpperCase();
+          if (isPatientPediatric) {
+            return tk === itemStr;
+          } else {
+            return tk === itemStr || (!isNaN(itemNum) && parseInt(tn, 10) === itemNum);
+          }
+        });
+
+        const toothRecord = {
+          patientId: pid,
+          toothNumber: !isNaN(itemNum) ? itemNum : toothItem,
+          toothKey: String(toothItem),
+          dentitionCategory: isPatientPediatric ? 'Pediatric' : 'Adult',
+          status: statusLabel,
+          conditionStatus: statusLabel,
+          condition: statusLabel,
+          cdtCode: cdt_code || (categoryKey === 'tmj' ? 'D7880' : 'D8080'),
+          color: conditionColor,
+          conditionColor: conditionColor,
+          comment: commentText,
+          comments: commentText,
+          updatedAt: new Date().toISOString()
+        };
+
+        if (idx >= 0) {
+          nextList[idx] = { ...nextList[idx], ...toothRecord };
+        } else {
+          nextList.push(toothRecord);
+        }
+      });
+      return nextList;
+    });
+
+    // Step B: Update toothData immediately for the currently active tooth
+    setToothData(prev => ({
+      ...(prev || {}),
+      status: statusLabel,
+      conditionStatus: statusLabel,
+      condition: statusLabel,
+      cdtCode: cdt_code || (categoryKey === 'tmj' ? 'D7880' : 'D8080'),
+      color: conditionColor,
+      conditionColor: conditionColor,
+      comment: commentText,
+      comments: commentText,
+      updatedAt: new Date().toISOString()
+    }));
+
+    // Step C: Debounce backend DB writes to avoid spamming network while dragging sliders
+    if (orthoSaveTimeoutRef.current) {
+      clearTimeout(orthoSaveTimeoutRef.current);
+    }
+
+    const executeDbSave = async () => {
+      pendingOrthoSaveRef.current = null;
+      const storedDoc = localStorage.getItem('doctor');
+      const docObj = storedDoc ? JSON.parse(storedDoc) : null;
+      const docId = docObj?.doctorID || docObj?.DoctorID || 2;
+
+      const dbUpdates = targetTeeth.map(tN => ({
+        toothNumber: tN,
+        conditionStatus: statusLabel,
+        cdtCode: cdt_code || (categoryKey === 'tmj' ? 'D7880' : 'D8080'),
+        color: conditionColor,
+        comment: commentText,
+        comments: commentText
+      }));
+
+      // 1. Bulk update Teeth in Database
+      try {
+        console.log(`📡 [ToothDetailPage:TMJ] Updating DB bulk teeth for patient #${pid}:`, targetTeeth);
+        const res = await fetch('/api/patients/teeth/update-bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patientId: pid,
+            updates: dbUpdates
+          })
+        });
+        if (res.ok) {
+          console.log(`✅ [ToothDetailPage:TMJ] DB Bulk Saved Successfully for teeth:`, targetTeeth);
+        } else {
+          console.warn(`⚠️ [ToothDetailPage:TMJ] DB Bulk response status:`, res.status);
+        }
+      } catch (err) {
+        console.error("[ToothDetailPage:TMJ] Error saving assessment to DB teeth:", err);
+      }
+
+      // 2. Persist to DiagnosticAssessments Table in Database with merged JSON
+      try {
+        let mergedJson = JSON.stringify(mergedAssessment);
+        const diagPayload = {
+          doctorId: docId,
+          suiteCategory: categoryKey,
+          assessmentJson: mergedJson,
+          cdtCode: cdt_code || (categoryKey === 'tmj' ? 'D7880' : 'D8080'),
+          diagnosisSummary: `${statusLabel}: ${commentText}`
+        };
+        console.log(`📡 [ToothDetailPage:TMJ] Saving to DiagnosticAssessments table:`, diagPayload);
+        const diagRes = await fetch(`/api/patients/${pid}/diagnostic-assessment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(diagPayload)
+        });
+        if (diagRes.ok) {
+          console.log(`✅ [ToothDetailPage:TMJ] DB Diagnostic Assessment Table Saved Successfully!`);
+        } else {
+          console.warn(`⚠️ [ToothDetailPage:TMJ] Diagnostic assessment response status:`, diagRes.status);
+        }
+      } catch (diagErr) {
+        console.error("[ToothDetailPage:TMJ] Error saving assessment to DB table:", diagErr);
+      }
+
+      // 3. Add Clinical Log entry
+      try {
+        await fetch(`/api/patients/${pid}/clinical-logs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            doctorID: docId,
+            message: `Clinical Assessment Saved: ${statusLabel} for teeth [${targetTeeth.join(', ')}]. ${commentText}`,
+            action: `Diagnostic Suite: ${statusLabel}`
+          })
+        });
+      } catch (logErr) {}
+
+      setToast({ visible: true, message: `Saved ${statusLabel} to Patient Record & Teeth [${targetTeeth.join(', ')}]` });
+      setTimeout(() => setToast({ visible: false, message: '' }), 3000);
+    };
+
+    pendingOrthoSaveRef.current = executeDbSave;
+    executeDbSave();
   };
 
   // Navigation handlers
@@ -581,6 +1003,9 @@ export default function ToothDetailPage() {
         handleBackToChart={handleBackToChart}
         handleOpenAllTeeth={handleOpenAllTeeth}
         handlePrintReport={handlePrintReport}
+        onOpenImplant={() => setShowImplantModal(true)}
+        onOpenBiopsy={() => setShowBiopsyModal(true)}
+        onOpenAligner={() => setShowAlignerModal(true)}
       />
 
       <main className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-5">
@@ -658,9 +1083,38 @@ export default function ToothDetailPage() {
                     FDI #{fdiNum}
                   </span>
                 </div>
-                <span className="text-[11px] font-extrabold text-slate-500">
-                  Last Evaluated: Today, 2026
-                </span>
+                {/* Clinical Specialty Segmented Dock */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center bg-slate-100/90 p-0.5 rounded-xl border border-slate-200/90 shadow-2xs gap-0.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowImplantModal(true)}
+                      className="px-2 py-1 rounded-lg text-[10.5px] font-extrabold bg-blue-600 hover:bg-blue-700 active:scale-95 text-white transition-all flex items-center gap-1 cursor-pointer shrink-0 shadow-2xs"
+                      title="Implant Planning (Length, Diameter, Bone Quality, 3D Guided Surgery)"
+                    >
+                      <span className="text-[11px]">🔩</span> Implant
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowBiopsyModal(true)}
+                      className="px-2 py-1 rounded-lg text-[10.5px] font-extrabold bg-purple-600 hover:bg-purple-700 active:scale-95 text-white transition-all flex items-center gap-1 cursor-pointer shrink-0 shadow-2xs"
+                      title="Biopsy & Oral Pathology (Incisional/Excisional, Anatomical Site)"
+                    >
+                      <span className="text-[11px]">🔬</span> Biopsy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAlignerModal(true)}
+                      className="px-2 py-1 rounded-lg text-[10.5px] font-extrabold bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white transition-all flex items-center gap-1 cursor-pointer shrink-0 shadow-2xs"
+                      title="Clear Aligners (Brand, Stages, Attachments, IPR, Wear Schedule)"
+                    >
+                      <span className="text-[11px]">✨</span> Aligners
+                    </button>
+                  </div>
+                  <span className="text-[11px] font-extrabold text-slate-500 ml-1">
+                    Today, 2026
+                  </span>
+                </div>
               </div>
 
               {/* Explicit Affected Zone Display */}
@@ -683,7 +1137,7 @@ export default function ToothDetailPage() {
                 { id: 'overview', label: 'Overview & Notes', icon: FileText },
                 { id: 'periodontal', label: 'Periodontal Matrix', icon: Activity },
                 { id: 'surfaces', label: 'Multi-Surface Zones', icon: Layers },
-                { id: 'orthotmj', label: 'Ortho & TMJ Suite', icon: Sparkles }
+                { id: 'orthotmj', label: isPediatric ? 'Ortho & Habits' : 'Ortho & TMJ Suite', icon: Sparkles }
               ].map(tab => {
                 const Icon = tab.icon;
                 const isSel = activeTab === tab.id;
@@ -725,6 +1179,10 @@ export default function ToothDetailPage() {
                 setIsEditingNotes={setIsEditingNotes}
                 handleSaveObservation={handleSaveObservation}
                 saving={saving}
+                onOpenImplant={() => setShowImplantModal(true)}
+                onOpenBiopsy={() => setShowBiopsyModal(true)}
+                onOpenAligner={() => setShowAlignerModal(true)}
+                refreshTrigger={specialtyRefreshTrigger}
               />
             )}
 
@@ -765,6 +1223,7 @@ export default function ToothDetailPage() {
                 patientId={patientId}
                 patient={patient}
                 patientAge={patientAge}
+                liveOrthoAssessment={liveOrthoAssessment}
                 onSaveAssessment={handleSaveOrthoTmjAssessment}
               />
             )}
@@ -781,11 +1240,65 @@ export default function ToothDetailPage() {
         isPediatric={isPediatric}
       />
 
-      {/* Floating Toast Notification */}
+      {/* Clinical Specialty Modals (Fully Integrated with Tooth Observations & DB) */}
+      <ImplantPlanningModal
+        isOpen={showImplantModal}
+        onClose={() => setShowImplantModal(false)}
+        patientId={patientId}
+        toothNumber={tNum}
+        toothKey={tKey}
+        onPlanSaved={async (plan) => {
+          const targetTooth = plan?.toothKey || plan?.toothNumber || tKey;
+          const implantDesc = `Implant Plan: ${plan?.implantBrand || 'Straumann'} ${plan?.implantLength || 10}mm x ${plan?.implantDiameter || 4.3}mm, Bone ${plan?.boneQuality || 'D2'}${plan?.guidedSurgeryFlag ? ', 3D Guided' : ''}`;
+          await handleSaveObservation('Dental Implant', implantDesc, '#0E8A80');
+          setSpecialtyRefreshTrigger(prev => prev + 1);
+          setToast({ visible: true, message: `Tooth #${targetTooth} updated with Dental Implant plan.` });
+          setTimeout(() => setToast({ visible: false, message: '' }), 3500);
+        }}
+      />
+
+      <BiopsyPathologyModal
+        isOpen={showBiopsyModal}
+        onClose={() => setShowBiopsyModal(false)}
+        patientId={patientId}
+        toothNumber={tNum}
+        toothKey={tKey}
+        onBiopsySaved={async (biopsy) => {
+          const targetTooth = biopsy?.toothKey || biopsy?.toothNumber || tKey;
+          const biopsyDesc = `Biopsy Requisition: ${biopsy?.biopsyType || 'Incisional'} at ${biopsy?.siteOfBiopsy || `Tooth #${tKey}`} (${biopsy?.clinicalImpression || 'Oral Pathology'})`;
+          await handleSaveObservation('Biopsy / Pathology', biopsyDesc, '#8B5CF6');
+          setSpecialtyRefreshTrigger(prev => prev + 1);
+          setToast({ visible: true, message: `Tooth #${targetTooth} updated with Biopsy requisition.` });
+          setTimeout(() => setToast({ visible: false, message: '' }), 3500);
+        }}
+      />
+
+      <ClearAlignerModal
+        isOpen={showAlignerModal}
+        onClose={() => setShowAlignerModal(false)}
+        patientId={patientId}
+        onPlanSaved={async (plan) => {
+          const alignerDesc = `Clear Aligners: ${plan?.alignerBrand || 'Invisalign'} (${plan?.totalStages || 24} Trays, ${plan?.wearSchedule || '10 Days/Tray'})`;
+          await handleSaveObservation('Clear Aligners Active', alignerDesc, '#0284C7');
+          setSpecialtyRefreshTrigger(prev => prev + 1);
+          setToast({ visible: true, message: `Clear Aligner treatment plan applied.` });
+          setTimeout(() => setToast({ visible: false, message: '' }), 3500);
+        }}
+      />
+
+      {/* Floating Toast Notification (Top Right Corner) */}
       {toast.visible && (
-        <div className="fixed bottom-6 right-6 bg-[#10244B] text-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 text-xs font-bold animate-slide-up z-50 border border-cyan-400/40">
-          <CheckCircle2 className="w-4 h-4 text-cyan-400" />
+        <div className="fixed top-24 right-6 sm:right-8 bg-[#10244B]/95 backdrop-blur-md text-white pl-4 pr-3 py-3 rounded-2xl shadow-[0_20px_50px_rgba(16,36,75,0.35)] flex items-center gap-3 text-xs font-bold animate-slide-up z-[100] border border-cyan-400/40 ring-1 ring-cyan-400/30">
+          <CheckCircle2 className="w-4 h-4 text-cyan-400 flex-shrink-0" />
           <span>{toast.message}</span>
+          <button 
+            type="button"
+            onClick={() => setToast({ visible: false, message: '' })}
+            className="ml-1 text-white/50 hover:text-white transition-colors p-1 rounded-full hover:bg-white/10"
+            title="Dismiss notification"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
     </div>

@@ -1,7 +1,139 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import axios from 'axios'
 import './index.css'
 import App from './App.jsx'
+import { recordDoctorActivity } from './components/IdleSessionManager'
+import { purgeClinicianSession } from './services/sessionSecurityService'
+
+// Global API Configuration & Token Authorization Interceptors
+const API_HOST = 'https://dentist-api-dev.vitonta.com';
+const isRemoteHostNeeded = typeof window !== 'undefined' && 
+  !window.location.hostname.includes('vitonta.com') && 
+  window.location.hostname !== 'localhost' && 
+  window.location.hostname !== '127.0.0.1';
+
+// Auto-recover from dynamic chunk load failures when a new version is deployed to Vercel
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (event) => {
+    console.warn('[Vite] Dynamic chunk preload failed due to a new deployment. Auto-refreshing page...');
+    event.preventDefault();
+    const reloadKey = 'dentia_chunk_reload_' + window.location.pathname;
+    if (!sessionStorage.getItem(reloadKey)) {
+      sessionStorage.setItem(reloadKey, Date.now().toString());
+      window.location.reload();
+    }
+  });
+}
+
+if (isRemoteHostNeeded) {
+  axios.defaults.baseURL = API_HOST;
+}
+
+// Intercept Axios requests to attach Authorization header and record activity
+axios.interceptors.request.use((config) => {
+  try {
+    const stored = localStorage.getItem('doctor');
+    if (stored) {
+      const doctor = JSON.parse(stored);
+      if (doctor && doctor.token) {
+        config.headers = config.headers || {};
+        config.headers.Authorization = `Bearer ${doctor.token}`;
+        recordDoctorActivity();
+      }
+    }
+  } catch {}
+  return config;
+});
+
+// Intercept Axios responses for 401 Unauthorized
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
+    const isPortalRoute = currentPath.startsWith('/portal');
+    const isSkipAuth = error.config?.headers?.['X-Skip-Auth-Redirect'] || error.config?.headers?.['x-skip-auth-redirect'];
+    const isLoginEndpoint = error.config?.url?.includes('/api/auth/login') || error.config?.url?.includes('/api/patient-auth/login');
+
+    if (error.response && error.response.status === 401 && !isLoginEndpoint && !isPortalRoute && !isSkipAuth) {
+      const hasDoctorSession = !!localStorage.getItem('doctor');
+      if (hasDoctorSession) {
+        purgeClinicianSession('unauthorized');
+        if (currentPath !== '/login') {
+          window.location.href = '/login?expired=true';
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Intercept window.fetch to automatically attach Authorization header and redirect on 401
+if (typeof window !== 'undefined') {
+  const originalFetch = window.fetch;
+  window.fetch = function (resource, init = {}) {
+    let url = typeof resource === 'string' ? resource : (resource?.url || '');
+
+    // Prefix API_HOST when running on Vercel or external origin
+    if (isRemoteHostNeeded && typeof resource === 'string' && resource.startsWith('/api')) {
+      resource = API_HOST + resource;
+    }
+
+    // Attach doctor token if logged in
+    let doctor = null;
+    try {
+      const stored = localStorage.getItem('doctor');
+      if (stored) doctor = JSON.parse(stored);
+    } catch {}
+
+    if (doctor && doctor.token) {
+      init = init || {};
+      if (!init.headers) {
+        init.headers = {};
+      }
+      if (init.headers instanceof Headers) {
+        if (!init.headers.has('Authorization')) {
+          init.headers.set('Authorization', `Bearer ${doctor.token}`);
+        }
+      } else if (Array.isArray(init.headers)) {
+        init.headers.push(['Authorization', `Bearer ${doctor.token}`]);
+      } else {
+        init.headers['Authorization'] = init.headers['Authorization'] || `Bearer ${doctor.token}`;
+      }
+      recordDoctorActivity();
+    }
+
+    return originalFetch.call(this, resource, init).then((response) => {
+      if (response.status === 401 && typeof url === 'string' && url.includes('/api/')) {
+        const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
+        const isPortalRoute = currentPath.startsWith('/portal');
+        const isPatientApi = url.includes('/api/patient-') || url.includes('/api/patient-portal');
+        const isLoginApi = url.includes('/api/auth/login') || url.includes('/api/patient-auth/login');
+
+        let isSkipRedirect = false;
+        if (init?.headers) {
+          if (init.headers instanceof Headers) {
+            isSkipRedirect = init.headers.get('X-Skip-Auth-Redirect') === 'true';
+          } else if (typeof init.headers === 'object') {
+            isSkipRedirect = init.headers['X-Skip-Auth-Redirect'] === 'true' || init.headers['x-skip-auth-redirect'] === 'true';
+          }
+        }
+
+        // Strict guard: NEVER logout or redirect on patient portal routes, patient APIs, or probe requests
+        if (!isPortalRoute && !isPatientApi && !isLoginApi && !isSkipRedirect) {
+          const hasDoctorSession = !!localStorage.getItem('doctor');
+          if (hasDoctorSession) {
+            purgeClinicianSession('unauthorized');
+            if (currentPath !== '/login') {
+              window.location.href = '/login?expired=true';
+            }
+          }
+        }
+      }
+      return response;
+    });
+  };
+}
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

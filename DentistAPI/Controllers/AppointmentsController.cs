@@ -2,8 +2,11 @@ using DentistAPI.Repositories;
 using System.Threading.Tasks;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Logging;
+using Dapper;
 using DentistAPI.Models;
 using DentistAPI.Services;
 
@@ -24,17 +27,20 @@ namespace DentistAPI.Controllers
         private readonly IEmailService _emailService;
         private readonly IGeminiDentalNotesService _geminiService;
         private readonly DentalRepository _dentalRepository;
+        private readonly ILogger<AppointmentsController> _logger;
 
         public AppointmentsController(
             IConfiguration configuration, 
             IEmailService emailService,
             IGeminiDentalNotesService geminiService,
-            DentalRepository dentalRepository)
+            DentalRepository dentalRepository,
+            ILogger<AppointmentsController> logger)
         {
-            _connectionString = configuration.GetConnectionString("DefaultConnection");
+            _connectionString = configuration.GetConnectionString("DefaultConnection") ?? string.Empty;
             _emailService = emailService;
             _geminiService = geminiService;
             _dentalRepository = dentalRepository;
+            _logger = logger;
         }
 
         [HttpPost("book-voice")]
@@ -99,47 +105,96 @@ namespace DentistAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                _logger.LogError(ex, "Error booking voice appointment");
+                return StatusCode(500, new { message = "An error occurred while booking the voice appointment. Please try again." });
             }
         }
 
         [HttpGet]
-        public IActionResult GetAppointments([FromQuery] int? doctorId)
+        public async Task<IActionResult> GetAppointments([FromQuery] int? doctorId)
         {
-            var appointments = new List<Appointment>();
             try
             {
                 using (var conn = new SqlConnection(_connectionString))
                 {
-                    conn.Open();
-                    string query = "SELECT * FROM [dentist].[Appointments] WHERE (@DoctorId IS NULL OR DoctorID = @DoctorId) ORDER BY PreferredDate ASC";
-                    var cmd = new SqlCommand(query, conn);
-                    cmd.Parameters.AddWithValue("@DoctorId", (object?)doctorId ?? DBNull.Value);
-                    using (var reader = cmd.ExecuteReader())
+                    await conn.OpenAsync();
+                    string query = @"
+                        SELECT DISTINCT 
+                            a.AppointmentID,
+                            a.PatientID,
+                            a.FullName,
+                            a.Phone,
+                            a.Email,
+                            a.PreferredDate,
+                            a.CreatedAt,
+                            a.Status,
+                            a.Reason,
+                            a.Notes,
+                            a.DoctorID,
+                            i.InvoiceNumber,
+                            i.TotalAmount,
+                            i.Currency,
+                            i.Status AS InvoiceStatus,
+                            pay.PaymentMethod
+                        FROM [dentist].[Appointments] a
+                        LEFT JOIN [dentist].[Patients] p ON p.PatientID = a.PatientID
+                        LEFT JOIN [dentist].[Invoices] i ON i.AppointmentID = a.AppointmentID
+                        LEFT JOIN (
+                            SELECT InvoiceID, MAX(PaymentMethod) as PaymentMethod 
+                            FROM [dentist].[Payments] 
+                            GROUP BY InvoiceID
+                        ) pay ON pay.InvoiceID = i.InvoiceID
+                        WHERE (@DoctorId IS NULL 
+                           OR a.DoctorID = @DoctorId 
+                           OR (a.DoctorID IS NULL AND p.DoctorID = @DoctorId))
+                        ORDER BY a.PreferredDate ASC";
+
+                    var appointments = (await conn.QueryAsync<Appointment>(query, new { DoctorId = doctorId })).ToList();
+
+                    if (appointments.Any())
                     {
-                        bool hasReason = Enumerable.Range(0, reader.FieldCount).Any(i => reader.GetName(i).Equals("Reason", StringComparison.OrdinalIgnoreCase));
-                        while (reader.Read())
+                        var apptIds = appointments.Select(a => a.AppointmentID).ToList();
+                        try
                         {
-                            appointments.Add(new Appointment
+                            string itemsSql = @"
+                                SELECT ii.InvoiceItemID, ii.InvoiceID, ii.ProcedureCode, ii.Description, ii.Quantity, ii.UnitPrice, ii.TotalPrice, i.AppointmentID
+                                FROM [dentist].[InvoiceItems] ii
+                                INNER JOIN [dentist].[Invoices] i ON i.InvoiceID = ii.InvoiceID
+                                WHERE i.AppointmentID IN @ApptIds";
+
+                            var items = await conn.QueryAsync<dynamic>(itemsSql, new { ApptIds = apptIds });
+                            var itemsByAppt = items.GroupBy(it => (int)it.AppointmentID).ToDictionary(g => g.Key, g => g.ToList());
+
+                            foreach (var appt in appointments)
                             {
-                                AppointmentID = Convert.ToInt32(reader["AppointmentID"]),
-                                FullName = reader["FullName"].ToString(),
-                                Phone = reader["Phone"].ToString(),
-                                Email = reader["Email"] != DBNull.Value ? reader["Email"].ToString() : "",
-                                PreferredDate = reader["PreferredDate"] != DBNull.Value ? Convert.ToDateTime(reader["PreferredDate"]) : DateTime.MinValue,
-                                CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
-                                Status = reader["Status"] != DBNull.Value ? reader["Status"].ToString() : "Pending",
-                                Reason = hasReason && reader["Reason"] != DBNull.Value ? reader["Reason"].ToString() : "",
-                                DoctorID = reader["DoctorID"] != DBNull.Value ? Convert.ToInt32(reader["DoctorID"]) : null
-                            });
+                                if (itemsByAppt.TryGetValue(appt.AppointmentID, out var apptItems))
+                                {
+                                    appt.Items = apptItems.Select(it => new InvoiceItem
+                                    {
+                                        InvoiceItemID = (long)it.InvoiceItemID,
+                                        InvoiceID = (long)it.InvoiceID,
+                                        ProcedureCode = (string?)it.ProcedureCode,
+                                        Description = (string)it.Description,
+                                        Quantity = (int)it.Quantity,
+                                        UnitPrice = (decimal)it.UnitPrice,
+                                        TotalPrice = (decimal)it.TotalPrice
+                                    }).ToList();
+                                }
+                            }
+                        }
+                        catch (Exception itemEx)
+                        {
+                            Console.WriteLine($"[Warning] Could not load invoice items for doctor appointments: {itemEx.Message}");
                         }
                     }
+
+                    return Ok(appointments);
                 }
-                return Ok(appointments);
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                _logger.LogError(ex, "Error retrieving appointments");
+                return StatusCode(500, new { message = "An error occurred while retrieving appointments. Please try again." });
             }
         }
 
@@ -198,7 +253,8 @@ namespace DentistAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                _logger.LogError(ex, "Error creating appointment");
+                return StatusCode(500, new { message = "An error occurred while creating the appointment. Please try again." });
             }
         }
 
@@ -229,12 +285,15 @@ namespace DentistAPI.Controllers
 
                     var cmd = new SqlCommand(@"
                         UPDATE [dentist].[Appointments] 
-                        SET Status = @Status, Reason = @Reason
+                        SET Status = @Status, 
+                            Reason = COALESCE(@Reason, Reason),
+                            Notes = CASE WHEN @Notes IS NOT NULL THEN @Notes ELSE Notes END
                         WHERE AppointmentID = @Id
                     ", conn);
                     
                     cmd.Parameters.AddWithValue("@Status", string.IsNullOrEmpty(appointmentUpdate.Status) ? "Pending" : appointmentUpdate.Status);
                     cmd.Parameters.AddWithValue("@Reason", string.IsNullOrEmpty(appointmentUpdate.Reason) ? (object)DBNull.Value : appointmentUpdate.Reason);
+                    cmd.Parameters.AddWithValue("@Notes", appointmentUpdate.Notes != null ? (object)appointmentUpdate.Notes : DBNull.Value);
                     cmd.Parameters.AddWithValue("@Id", id);
 
                     int rowsAffected = await cmd.ExecuteNonQueryAsync();
@@ -267,8 +326,37 @@ namespace DentistAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                _logger.LogError(ex, "Error updating appointment status for ID {Id}", id);
+                return StatusCode(500, new { message = "An error occurred while updating the appointment status. Please try again." });
             }
+        }
+
+        [HttpPut("{id}/treatment-plan")]
+        public async Task<IActionResult> UpdateTreatmentPlan(int id, [FromBody] UpdateTreatmentPlanRequest request)
+        {
+            if (id <= 0)
+            {
+                return BadRequest(new { message = "Valid appointment ID is required." });
+            }
+
+            var (success, message, updatedAppt) = await _dentalRepository.UpdateAppointmentTreatmentPlanDoctorAsync(
+                id,
+                null,
+                request?.Procedures,
+                request?.Notes
+            );
+
+            if (!success)
+            {
+                return BadRequest(new { message });
+            }
+
+            return Ok(new
+            {
+                message = "Doctor treatment plan and notes updated successfully.",
+                appointment = updatedAppt
+            });
         }
     }
 }
+

@@ -518,8 +518,8 @@ export default function ToothDetailPage() {
 
       // 1. Fetch Patient Profile
       try {
-        console.log(`[ToothDetailPage] 📡 Requesting Patient Profile: http://localhost:5107/api/patients/${pid}`);
-        const pRes = await fetch(`http://localhost:5107/api/patients/${pid}`);
+        console.log(`[ToothDetailPage] 📡 Requesting Patient Profile: /api/patients/${pid}`);
+        const pRes = await fetch(`/api/patients/${pid}`);
         console.log(`[ToothDetailPage] 📥 Patient Response Status: ${pRes.status} (${pRes.statusText})`);
         if (pRes.ok) {
           const contentType = pRes.headers.get('content-type');
@@ -546,8 +546,8 @@ export default function ToothDetailPage() {
 
       // 2. Fetch Complete Odontogram Teeth Chart
       try {
-        console.log(`[ToothDetailPage] 📡 Requesting Odontogram Chart: http://localhost:5107/api/patients/${pid}/chart`);
-        const teethRes = await fetch(`http://localhost:5107/api/patients/${pid}/chart`);
+        console.log(`[ToothDetailPage] 📡 Requesting Odontogram Chart: /api/patients/${pid}/chart`);
+        const teethRes = await fetch(`/api/patients/${pid}/chart`);
         console.log(`[ToothDetailPage] 📥 Teeth Chart Response Status: ${teethRes.status} (${teethRes.statusText})`);
         if (teethRes.ok) {
           const contentType = teethRes.headers.get('content-type');
@@ -674,7 +674,7 @@ export default function ToothDetailPage() {
         comments: commentToSave
       }];
 
-      const res = await fetch('http://localhost:5107/api/patients/teeth/update-bulk', {
+      const res = await fetch('/api/patients/teeth/update-bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

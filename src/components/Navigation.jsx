@@ -1,6 +1,8 @@
 import React from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import { LogOut, Home, Users, Calendar, Stethoscope, Info, CalendarPlus, Phone, Clock, Mail } from 'lucide-react';
+import { LogOut, Home, Users, Calendar, Stethoscope, Info, CalendarPlus, Phone, Clock, Mail, Star, UserCheck, DollarSign, Building2, Shield } from 'lucide-react';
+import { HardwareDeviceSyncBadge } from './HardwareDeviceSyncBadge';
+import { purgeClinicianSession } from '../services/sessionSecurityService';
 
 export default function Navigation() {
     const navigate = useNavigate();
@@ -15,68 +17,139 @@ export default function Navigation() {
     }, []);
 
     const handleLogout = () => {
-        localStorage.removeItem('doctor');
+        purgeClinicianSession('manual_logout');
         setDoctor(null);
-        navigate('/');
+        navigate('/login');
     };
 
-    const getLinkClass = (path) => {
-        const isActive = location.pathname === path || (path === '/dashboard' && location.pathname === '/');
-        const baseClasses = "flex items-center justify-center p-3 rounded-full transition-all duration-300";
+    const getLinkClass = (isActive) => {
+        const baseClasses = "flex items-center justify-center p-3 rounded-full transition-all duration-200 relative group cursor-pointer";
         return isActive 
-            ? `${baseClasses} text-primary-teal font-bold bg-white shadow-md scale-105`
-            : `${baseClasses} text-muted-text font-semibold hover:text-primary-teal hover:bg-white/50`;
+            ? `${baseClasses} text-primary-teal font-bold bg-white shadow-md scale-105 ring-1 ring-[#4A7CD2]/25`
+            : `${baseClasses} text-slate-600 hover:text-primary-teal hover:bg-white/60 hover:scale-105`;
     };
-
     return (
-        <div className="pt-4 px-6 sticky top-0 z-50">
+        <div className="pt-3 pb-2 px-4 sm:px-6 sticky top-0 z-50 bg-[#FBFBFA]/95 backdrop-blur-md border-b border-light-teal/40 transition-all shadow-xs">
             {/* Top Contact Bar */}
             <div className="w-full max-w-[1800px] mx-auto px-4 mb-2 flex items-center justify-between text-xs text-muted-text font-medium">
                 <div className="flex items-center space-x-6">
-                    <span className="flex items-center"><Phone className="w-3.5 h-3.5 mr-1.5 text-primary-teal" /> +1 123 456 789</span>
-                    <span className="flex items-center"><Clock className="w-3.5 h-3.5 mr-1.5 text-primary-teal" /> Mon - Sat: 08:00 - 20:00</span>
-                    <span className="flex items-center hidden sm:flex"><Mail className="w-3.5 h-3.5 mr-1.5 text-primary-teal" /> contact@dentiaclinic.com</span>
+                    <span className="flex items-center text-slate-600"><Phone className="w-3.5 h-3.5 mr-1.5 text-primary-teal" /> +1 123 456 789</span>
+                    <span className="flex items-center text-slate-600"><Clock className="w-3.5 h-3.5 mr-1.5 text-primary-teal" /> Mon - Sat: 08:00 - 20:00</span>
+                    <span className="flex items-center text-slate-600 hidden md:flex"><Mail className="w-3.5 h-3.5 mr-1.5 text-primary-teal" /> contact@dentiaclinic.com</span>
                 </div>
-                <div className="flex items-center space-x-4">
-                    <span className="flex items-center text-accent-gold font-bold">★ 5.0 <span className="text-muted-text font-medium ml-1">(23k Google Reviews)</span></span>
+                <div className="flex items-center space-x-5">
+                    <span className="flex items-center text-accent-gold font-bold">★ 5.0 <span className="text-slate-600 font-medium ml-1">(23k Google Reviews)</span></span>
+                    {!doctor && (
+                        <button 
+                            onClick={() => navigate('/login')}
+                            className="text-slate-600 hover:text-primary-teal font-semibold transition-colors flex items-center gap-1 cursor-pointer pl-2 border-l border-slate-300"
+                        >
+                            Clinician Portal →
+                        </button>
+                    )}
                 </div>
             </div>
 
-            <header className="w-full max-w-[1800px] mx-auto bg-gradient-to-r from-white/90 via-white/80 to-[#EAF0FC]/65 backdrop-blur-2xl border border-white/90 h-20 flex items-center justify-between px-6 rounded-full shadow-lg shadow-[#4A7CD2]/5 transition-all duration-300">
-                <div className="flex items-center space-x-3 cursor-pointer" onClick={() => navigate('/dashboard')}>
+            <header className="w-full max-w-[1800px] mx-auto bg-gradient-to-r from-white/95 via-white/85 to-[#EAF0FC]/75 backdrop-blur-2xl border border-white/90 h-20 flex items-center justify-between px-6 rounded-full shadow-lg shadow-[#0A1A24]/5 transition-all duration-300">
+                <div className="flex items-center space-x-3 cursor-pointer" onClick={() => navigate('/')}>
                     <img src="/images/logo-black.webp" alt="Dentia Logo" className="h-8 object-contain" />
                 </div>
                 
-                <nav className="flex items-center space-x-2 bg-gradient-to-r from-[#EAF0FC]/80 via-white/70 to-[#EAF0FC]/95 p-1.5 rounded-full border border-[#4A7CD2]/25 shadow-inner overflow-x-auto scrollbar-hide">
-                    <Link to="/dashboard" className={getLinkClass('/dashboard')} title="Home">
+                <nav className="hidden lg:flex items-center space-x-1.5 bg-gradient-to-r from-[#EAF0FC]/80 via-white/80 to-[#EAF0FC]/95 p-1.5 rounded-full border border-[#4A7CD2]/20 shadow-inner">
+                    <Link 
+                        to="/" 
+                        className={getLinkClass(location.pathname === '/' || location.pathname === '/dashboard')}
+                        title="Home"
+                    >
                         <Home className="w-5 h-5" />
                     </Link>
                     
                     {doctor && (
                         <>
-                            <Link to="/directory" className={getLinkClass('/directory')} title="Patient Directory">
+                            <Link 
+                                to="/directory" 
+                                className={getLinkClass(location.pathname === '/directory' || location.pathname.startsWith('/chart'))}
+                                title="Patient Directory"
+                            >
                                 <Users className="w-5 h-5" />
                             </Link>
-                            <Link to="/appointments" className={getLinkClass('/appointments')} title="Appointments">
+                            <Link 
+                                to="/appointments" 
+                                className={getLinkClass(location.pathname === '/appointments')}
+                                title="Appointments Hub"
+                            >
                                 <Calendar className="w-5 h-5" />
                             </Link>
-                            <Link to="/book" className={getLinkClass('/book')} title="Book Now">
-                                <CalendarPlus className="w-5 h-5" />
+                            <Link 
+                                to="/doctor/pricing" 
+                                className={getLinkClass(location.pathname === '/doctor/pricing' || location.pathname === '/treatment-pricing')}
+                                title="Doctor Fee Schedules & Treatment Pricing"
+                            >
+                                <DollarSign className="w-5 h-5" />
                             </Link>
+                            {doctor.isSuperAdmin && (
+                                <>
+                                    <Link 
+                                        to="/admin/organizations" 
+                                        className={getLinkClass(location.pathname === '/admin/organizations' || location.pathname === '/admin/hospitals')}
+                                        title="Hospital & Organization Management (SuperAdmin)"
+                                    >
+                                        <Building2 className="w-5 h-5 text-indigo-600" />
+                                    </Link>
+                                    <Link 
+                                        to="/admin/doctors" 
+                                        className={getLinkClass(location.pathname === '/admin/doctors')}
+                                        title="Doctor Directory & Profiles (SuperAdmin)"
+                                    >
+                                        <Shield className="w-5 h-5 text-emerald-600" />
+                                    </Link>
+                                </>
+                            )}
                         </>
                     )}
                     
-                    <Link to="/treatment" className={getLinkClass('/treatment')} title="Treatments">
+                    <Link 
+                        to="/treatment" 
+                        className={getLinkClass(location.pathname === '/treatment')}
+                        title="Treatments"
+                    >
                         <Stethoscope className="w-5 h-5" />
                     </Link>
-                    <Link to="/about" className={getLinkClass('/about')} title="About Us">
+                    <a 
+                        href="/#about" 
+                        className={getLinkClass(location.hash === '#about')}
+                        title="About Us"
+                    >
                         <Info className="w-5 h-5" />
-                    </Link>
+                    </a>
+                    <a 
+                        href="/#team" 
+                        className={getLinkClass(location.hash === '#team')}
+                        title="Our Doctors"
+                    >
+                        <UserCheck className="w-5 h-5" />
+                    </a>
+                    <a 
+                        href="/#reviews" 
+                        className={getLinkClass(location.hash === '#reviews')}
+                        title="Patient Reviews"
+                    >
+                        <Star className="w-5 h-5" />
+                    </a>
                 </nav>
 
-                <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-3">
+                    {/* Chairside Hardware Connection Badge */}
+                    <HardwareDeviceSyncBadge onOpenCapturePanel={() => {
+                        if (location.pathname.startsWith('/chart')) {
+                            // If on chart page, trigger capture panel modal
+                        } else {
+                            navigate('/directory');
+                        }
+                    }} />
+
                     {doctor ? (
-                        <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-3">
                             <div className="flex items-center space-x-2 bg-white pr-4 pl-1.5 py-1.5 rounded-full border border-light-teal shadow-sm whitespace-nowrap">
                                 <div className="w-8 h-8 rounded-full bg-light-teal/50 flex items-center justify-center overflow-hidden flex-shrink-0">
                                     <img src={`https://ui-avatars.com/api/?name=${doctor.firstName}+${doctor.lastName}&background=EAF0FC&color=4A7CD2`} alt="Doctor" />
@@ -94,17 +167,16 @@ export default function Navigation() {
                                 className="bg-light-teal text-dark-slate hover:bg-dark-slate hover:text-white border border-light-teal-hover transition-all duration-300 py-2.5 px-4 rounded-full text-xs font-bold shadow-sm flex items-center space-x-1.5 cursor-pointer" 
                                 title="Log Out"
                              >
-                                <LogOut className="w-3.5 h-3.5 text-accent-gold" />
-                                <span className="hidden md:inline">Log Out</span>
+                                <LogOut className="w-4 h-4" />
                              </button>
                         </div>
                     ) : (
-                        <button 
-                            onClick={() => navigate('/login')}
-                            className="bg-primary-teal hover:bg-primary-hover text-white font-bold py-2.5 px-6 rounded-full transition-all shadow-md cursor-pointer"
-                        >
-                            Clinician Login
-                        </button>
+                        <div className="flex items-center space-x-3">
+                            <Link to="/auth" className="bg-primary-teal hover:bg-primary-hover text-white font-bold py-2.5 px-6 rounded-full text-sm transition-all shadow-md hover:shadow-lg flex items-center gap-2">
+                                <CalendarPlus className="w-4 h-4" />
+                                Book Visit
+                            </Link>
+                        </div>
                     )}
                 </div>
             </header>

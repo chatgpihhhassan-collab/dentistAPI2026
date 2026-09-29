@@ -1,0 +1,810 @@
+================================================================================
+         PATIENT #26 (Ehtsham Ali) - MIC TRANSCRIPTION & GEMINI LOGS REPORT     
+================================================================================
+Generated At : 08/09/2026, 12:01:42 am (PKT)
+Patient ID   : 26
+Chart URL    : https://dentistfrontend.vercel.app/chart/26
+================================================================================
+
+================================================================================
+SECTION 1: ALL CLINICAL NOTES GENERATED FOR PATIENT #26 IN DATABASE
+================================================================================
+Total Notes Recorded: 5
+
+--------------------------------------------------------------------------------
+NOTE #1 (Note ID: 109) | Status: draft | CreatedAt: 2026-09-07T16:44:43.6266667
+Session ID       : 152
+Audio ID         : 73
+Dentist ID       : 2
+--------------------------------------------------------------------------------
+[SUMMARY / AI CLINICAL OVERVIEW]:
+Patient presented for evaluation of a discolored upper front tooth (tooth 11) with a history of trauma 15 years ago and a sinus tract on the buccal mucosa. Diagnosed with pulp necrosis and chronic apical abscess. Root canal therapy was initiated and completed today along with a permanent composite restoration.
+
+[CHIEF COMPLAINT]:
+Dark upper front tooth (tooth 11) with no active pain, but noticed a small painless bump on upper gums.
+
+[EXAMINATION]:
+Tooth 11 is visibly discolored (grayish). Sinus tract present on the buccal mucosa near the apex of tooth 11. Cold and electric pulp tests (EPT) are non-responsive. Percussion is mildly positive.
+
+[ASSESSMENT / DIAGNOSIS]:
+Pulp necrosis with a chronic apical abscess on tooth 11.
+
+[HISTORY]:
+History of trauma to tooth 11 approximately 15 years ago.
+
+[TREATMENT PERFORMED TODAY]:
+Initiated and completed root canal therapy on tooth 11. Prepared and shaped the canal to size 40, disinfected with sodium hypochlorite, obturated using gutta-percha and AH Plus sealer with warm vertical condensation. Placed a glass ionomer base and restored access cavity permanently with composite resin.
+
+[POST-OP ADVICE]:
+Advised patient to monitor for any sudden swelling.
+
+[FOLLOW-UP PLAN]:
+N/A
+
+--------------------------------------------------------------------------------
+NOTE #2 (Note ID: 108) | Status: draft | CreatedAt: 2026-09-07T16:42:12.61
+Session ID       : 151
+Audio ID         : 72
+Dentist ID       : 2
+--------------------------------------------------------------------------------
+[SUMMARY / AI CLINICAL OVERVIEW]:
+Initial consultation for patient Sara with missing clinical details.
+
+[CHIEF COMPLAINT]:
+N/A
+
+[EXAMINATION]:
+N/A
+
+[ASSESSMENT / DIAGNOSIS]:
+N/A
+
+[HISTORY]:
+N/A
+
+[TREATMENT PERFORMED TODAY]:
+N/A
+
+[POST-OP ADVICE]:
+N/A
+
+[FOLLOW-UP PLAN]:
+N/A
+
+--------------------------------------------------------------------------------
+NOTE #3 (Note ID: 107) | Status: draft | CreatedAt: 2026-09-07T16:27:28.02
+Session ID       : 150
+Audio ID         : 71
+Dentist ID       : 2
+--------------------------------------------------------------------------------
+[SUMMARY / AI CLINICAL OVERVIEW]:
+Tooth number 18 ke liye root canal treatment ki zaroorat mention ki gayi hai.
+
+[CHIEF COMPLAINT]:
+Not specified
+
+[EXAMINATION]:
+Tooth 18 require root canal.
+
+[ASSESSMENT / DIAGNOSIS]:
+Not specified
+
+[HISTORY]:
+Not specified
+
+[TREATMENT PERFORMED TODAY]:
+Not specified
+
+[POST-OP ADVICE]:
+Not specified
+
+[FOLLOW-UP PLAN]:
+Not specified
+
+--------------------------------------------------------------------------------
+NOTE #4 (Note ID: 106) | Status: Approved | CreatedAt: 2026-09-07T16:24:31.23
+Session ID       : 149
+Audio ID         : 70
+Dentist ID       : 1
+--------------------------------------------------------------------------------
+[SUMMARY / AI CLINICAL OVERVIEW]:
+Patient clinical checkup completed. Tooth 18 issue resolved.
+
+[CHIEF COMPLAINT]:
+Routine clinical checkup.
+
+[EXAMINATION]:
+Tooth 18 checkup completed.
+
+[ASSESSMENT / DIAGNOSIS]:
+General dental checkup
+
+[HISTORY]:
+Past history of dental discomfort.
+
+[TREATMENT PERFORMED TODAY]:
+Tooth 18 treatment rendered today.
+
+[POST-OP ADVICE]:
+Avoid extreme hot or cold food.
+
+[FOLLOW-UP PLAN]:
+Return if pain persists or for next checkup.
+
+--------------------------------------------------------------------------------
+NOTE #5 (Note ID: 105) | Status: Approved | CreatedAt: 2026-09-07T16:08:26.9666667
+Session ID       : 148
+Audio ID         : 69
+Dentist ID       : 2
+--------------------------------------------------------------------------------
+[SUMMARY / AI CLINICAL OVERVIEW]:
+Patient clinical checkup completed. Affected tooth issue resolved.
+
+[CHIEF COMPLAINT]:
+Routine clinical checkup.
+
+[EXAMINATION]:
+Affected tooth checkup completed.
+
+[ASSESSMENT / DIAGNOSIS]:
+General dental checkup
+
+[HISTORY]:
+Past history of dental discomfort.
+
+[TREATMENT PERFORMED TODAY]:
+Affected tooth treatment rendered today.
+
+[POST-OP ADVICE]:
+Avoid extreme hot or cold food.
+
+[FOLLOW-UP PLAN]:
+Return if pain persists or for next checkup.
+
+
+================================================================================
+SECTION 2: DOCTOR MIC TRANSCRIPTIONS & GEMINI CALL LOGS FOR PATIENT #26
+================================================================================
+Total Matching Gemini Log Entries: 14
+
+--------------------------------------------------------------------------------
+LOG ENTRY #1
+[CALL TYPE]             : CLINICAL DENTAL SOAP NOTE GENERATION
+[STATUS]                : SUCCESS
+[CALL SENT TIME]        : 2026-09-08 04:44:38.529
+[RESPONSE RECEIVED TIME]: 2026-09-08 04:44:43.624
+[TOTAL DURATION]        : 5094 ms (5.09 seconds)
+[TARGET ENDPOINT]       : https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent
+[METADATA / PATIENT]    : Patient: Ehtsham Ali (ID: 26), Doctor: jhangir ahmed (ID: 2), Region: PK
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+[Doctor Speech Transcript: "38 is here for the evaluation of a dark upper front tooth tooth 11. He reports no active pain but noticed a small painless bump on his upper gums he has a history of trauma to the tooth 15 years ago on examination tooth 11 is visiblyDiscolored grayish there is a patient sinus tractOn the Buckle on the buccal mukwa near the Apex of the tooth 11 cold and electric bulb test EBT are non-responsivePercussion is mildly positive I traced the sinus tract with a gotta Pasha cone and took a peripheral x-ray which reveals a large well-defined 6 mm radial look and see at the Apex of tooth 11. My assessment is pulp necrosis with a chronic apical abscess on tooth 11. Today I initiated root Canal therapy I prepared and shaved the canal to size 40 by 40Disinfected it thoroughly with sodium hypochlorite and an objected using gyota Parsna and ah plus sealer with warm vertical condensation I placed a glassIron merge base and restored the excess cavity permanently with composite resin no antibiotics are indicated because the infection has an active Pathway to drain sinus tract advised patient to monitor for any sudden swelling"]
+Full JSON Request Body:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+{
+  "info": "Note Summary: Patient presented for evaluation of a discolored upper front tooth (tooth 11) with a history of trauma 15 years ago and a sinus tract on the buccal mucosa. Diagnosed with pulp necrosis and chronic apical abscess. Root canal therapy was initiated and completed today along with a permanent composite restoration.\r\nStatus: incomplete\r\nDoctor Voice Prompt: Dr. jhangir ahmed, could you please specify the follow-up timeline for the patient?\r\nParsed JSON:",
+  "data": {
+    "status": "incomplete",
+    "missingFields": [
+      "Follow-up Plan"
+    ],
+    "doctorPrompt": "Dr. jhangir ahmed, could you please specify the follow-up timeline for the patient?",
+    "teethUpdates": [
+      {
+        "toothNumber": 11,
+        "status": "ROOT CANAL NEEDED"
+      }
+    ],
+    "draftNote": {
+      "summary": "Patient presented for evaluation of a discolored upper front tooth (tooth 11) with a history of trauma 15 years ago and a sinus tract on the buccal mucosa. Diagnosed with pulp necrosis and chronic apical abscess. Root canal therapy was initiated and completed today along with a permanent composite restoration.",
+      "chiefComplaint": "Dark upper front tooth (tooth 11) with no active pain, but noticed a small painless bump on upper gums.",
+      "history": "History of trauma to tooth 11 approximately 15 years ago.",
+      "examination": "Tooth 11 is visibly discolored (grayish). Sinus tract present on the buccal mucosa near the apex of tooth 11. Cold and electric pulp tests (EPT) are non-responsive. Percussion is mildly positive.",
+      "assessment": "Pulp necrosis with a chronic apical abscess on tooth 11.",
+      "treatmentPerformed": "Initiated and completed root canal therapy on tooth 11. Prepared and shaped the canal to size 40, disinfected with sodium hypochlorite, obturated using gutta-percha and AH Plus sealer with warm vertical condensation. Placed a glass ionomer base and restored access cavity permanently with composite resin.",
+      "postOpAdvice": "Advised patient to monitor for any sudden swelling.",
+      "followUp": "",
+      "prescriptions": [],
+      "treatmentPlans": [],
+      "aiWarnings": []
+    }
+  }
+}
+
+[FULL RAW GEMINI RESPONSE PAYLOAD]:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\n  \"status\": \"incomplete\",\n  \"missingFields\": [\n    \"Follow-up Plan\"\n  ],\n  \"doctorPrompt\": \"Dr. jhangir ahmed, could you please specify the follow-up timeline for the patient?\",\n  \"teethUpdates\": [\n    {\n      \"toothNumber\": 11,\n      \"status\": \"ROOT CANAL NEEDED\"\n    }\n  ],\n  \"draftNote\": {\n    \"summary\": \"Patient presented for evaluation of a discolored upper front tooth (tooth 11) with a history of trauma 15 years ago and a sinus tract on the buccal mucosa. Diagnosed with pulp necrosis and chronic apical abscess. Root canal therapy was initiated and completed today along with a permanent composite restoration.\",\n    \"chiefComplaint\": \"Dark upper front tooth (tooth 11) with no active pain, but noticed a small painless bump on upper gums.\",\n    \"history\": \"History of trauma to tooth 11 approximately 15 years ago.\",\n    \"examination\": \"Tooth 11 is visibly discolored (grayish). Sinus tract present on the buccal mucosa near the apex of tooth 11. Cold and electric pulp tests (EPT) are non-responsive. Percussion is mildly positive.\",\n    \"assessment\": \"Pulp necrosis with a chronic apical abscess on tooth 11.\",\n    \"treatmentPerformed\": \"Initiated and completed root canal therapy on tooth 11. Prepared and shaped the canal to size 40, disinfected with sodium hypochlorite, obturated using gutta-percha and AH Plus sealer with warm vertical condensation. Placed a glass ionomer base and restored access cavity permanently with composite resin.\",\n    \"postOpAdvice\": \"Advised patient to monitor for any sudden swelling.\",\n    \"followUp\": \"\",\n    \"prescriptions\": [],\n    \"treatmentPlans\": [],\n    \"aiWarnings\": []\n  }\n}",
+            "thoughtSignature": "El0KWwERTTIPYEtscMVgIlhRGFU25zCHMp8nw1rHOIVH5qtIIF6vnlue+YgGBJqA00VSoav84kfuaw2vBi9VnTkuarZakDbj0Sv8+v/YVPufxxyHIIfbbTgnXUBCXQQ="
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 2095,
+    "candidatesTokenCount": 417,
+    "totalTokenCount": 2512,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 2095
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "-emeaq_NMtmlqfkPpJzjuQs"
+}
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #2
+[CALL TYPE]             : CLINICAL LOG SYNC
+[STATUS]                : SUCCESS
+[CALL SENT TIME]        : 2026-09-08 04:44:35.649
+[RESPONSE RECEIVED TIME]: 
+[TOTAL DURATION]        : 
+[TARGET ENDPOINT]       : 
+[METADATA / PATIENT]    : Patient ID: 26 | Doctor ID: 2
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+[LogType: AI Tooth Assessment] AI Dictation: Recorded clinical diagnoses for 6 teeth [11, 15, 11, 11, 11, 11].
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #3
+[CALL TYPE]             : TEETH ODONTOGRAM BULK SYNC
+[STATUS]                : SUCCESS
+[CALL SENT TIME]        : 2026-09-08 04:44:34.663
+[RESPONSE RECEIVED TIME]: 
+[TOTAL DURATION]        : 
+[TARGET ENDPOINT]       : 
+[METADATA / PATIENT]    : Patient ID: 26 | Doctor ID: 2
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+Successfully synchronized 6 teeth observations to SQL database.
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #4
+[CALL TYPE]             : CLINICAL DENTAL SOAP NOTE GENERATION
+[STATUS]                : SUCCESS
+[CALL SENT TIME]        : 2026-09-08 04:42:07.432
+[RESPONSE RECEIVED TIME]: 2026-09-08 04:42:12.562
+[TOTAL DURATION]        : 5131 ms (5.13 seconds)
+[TARGET ENDPOINT]       : https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent
+[METADATA / PATIENT]    : Patient: Ehtsham Ali (ID: 26), Doctor: jhangir ahmed (ID: 2), Region: PK
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+[Doctor Speech Transcript: "Patient Sara"]
+Full JSON Request Body:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+{
+  "info": "Note Summary: Initial consultation for patient Sara with missing clinical details.\r\nStatus: incomplete\r\nDoctor Voice Prompt: Dr. jhangir ahmed, patient Sara ke liye chief complaint aur examination details kya hain?\r\nParsed JSON:",
+  "data": {
+    "status": "incomplete",
+    "missingFields": [
+      "Chief Complaint",
+      "Objective Exam",
+      "Radiographic Findings",
+      "Clinical Assessment",
+      "Treatment Rendered Today",
+      "Follow-up Plan"
+    ],
+    "doctorPrompt": "Dr. jhangir ahmed, patient Sara ke liye chief complaint aur examination details kya hain?",
+    "teethUpdates": [],
+    "draftNote": {
+      "summary": "Initial consultation for patient Sara with missing clinical details.",
+      "chiefComplaint": "",
+      "history": "",
+      "examination": "",
+      "assessment": "",
+      "treatmentPerformed": "",
+      "postOpAdvice": "",
+      "followUp": "",
+      "prescriptions": [],
+      "treatmentPlans": [],
+      "aiWarnings": [
+        {
+          "fieldName": "Chief Complaint",
+          "message": "Chief complaint is missing from the transcript.",
+          "severity": "warning"
+        },
+        {
+          "fieldName": "Objective Exam",
+          "message": "Objective examination details are missing.",
+          "severity": "warning"
+        },
+        {
+          "fieldName": "Clinical Assessment",
+          "message": "Diagnosis or assessment is missing.",
+          "severity": "warning"
+        }
+      ]
+    }
+  }
+}
+
+[FULL RAW GEMINI RESPONSE PAYLOAD]:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\n  \"status\": \"incomplete\",\n  \"missingFields\": [\n    \"Chief Complaint\",\n    \"Objective Exam\",\n    \"Radiographic Findings\",\n    \"Clinical Assessment\",\n    \"Treatment Rendered Today\",\n    \"Follow-up Plan\"\n  ],\n  \"doctorPrompt\": \"Dr. jhangir ahmed, patient Sara ke liye chief complaint aur examination details kya hain?\",\n  \"teethUpdates\": [],\n  \"draftNote\": {\n    \"summary\": \"Initial consultation for patient Sara with missing clinical details.\",\n    \"chiefComplaint\": \"\",\n    \"history\": \"\",\n    \"examination\": \"\",\n    \"assessment\": \"\",\n    \"treatmentPerformed\": \"\",\n    \"postOpAdvice\": \"\",\n    \"followUp\": \"\",\n    \"prescriptions\": [],\n    \"treatmentPlans\": [],\n    \"aiWarnings\": [\n      {\n        \"fieldName\": \"Chief Complaint\",\n        \"message\": \"Chief complaint is missing from the transcript.\",\n        \"severity\": \"warning\"\n      },\n      {\n        \"fieldName\": \"Objective Exam\",\n        \"message\": \"Objective examination details are missing.\",\n        \"severity\": \"warning\"\n      },\n      {\n        \"fieldName\": \"Clinical Assessment\",\n        \"message\": \"Diagnosis or assessment is missing.\",\n        \"severity\": \"warning\"\n      }\n    ]\n  }\n}",
+            "thoughtSignature": "El0KWwERTTIPtEkQg8GhTl/LkYZI1vWbnPJJdL4AxqYsxA07JnzzGZ/kzVLGGEGJo/W30LPtjLICJSIwdIGN2Ds4NbbCWI+2HCcrrnFtr2wAmrEMZbgHM+vX0zesJGE="
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 1858,
+    "candidatesTokenCount": 300,
+    "totalTokenCount": 2158,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 1858
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "Yumeau-cN-PKjuMP2qay0Aw"
+}
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #5
+[CALL TYPE]             : CHAT HISTORY SYNC
+[STATUS]                : SUCCESS
+[CALL SENT TIME]        : 2026-09-08 04:42:05.788
+[RESPONSE RECEIVED TIME]: 
+[TOTAL DURATION]        : 
+[TARGET ENDPOINT]       : 
+[METADATA / PATIENT]    : Patient ID: 26 | Doctor ID: 1
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+Transcript: Patient Sara | Action: Doctor, here is the clinical dossier for Ehtsham Ali (Patient ID #26):
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #6
+[CALL TYPE]             : CHATBOT COMMAND
+[STATUS]                : SUCCESS
+[CALL SENT TIME]        : 2026-09-08 04:42:02.218
+[RESPONSE RECEIVED TIME]: 
+[TOTAL DURATION]        : 
+[TARGET ENDPOINT]       : 
+[METADATA / PATIENT]    : Patient ID: 26 | Doctor ID: 2
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+Query: "Patient Sara"
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #7
+[CALL TYPE]             : CLINICAL DENTAL SOAP NOTE GENERATION
+[STATUS]                : SUCCESS
+[CALL SENT TIME]        : 2026-09-08 04:27:23.085
+[RESPONSE RECEIVED TIME]: 2026-09-08 04:27:27.964
+[TOTAL DURATION]        : 4879 ms (4.88 seconds)
+[TARGET ENDPOINT]       : https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent
+[METADATA / PATIENT]    : Patient: Ehtsham Ali (ID: 26), Doctor: jhangir ahmed (ID: 2), Region: PK
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+[Doctor Speech Transcript: "Booth number 18 required root canal"]
+Full JSON Request Body:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+{
+  "info": "Note Summary: Tooth number 18 ke liye root canal treatment ki zaroorat mention ki gayi hai.\r\nStatus: incomplete\r\nDoctor Voice Prompt: Dr. jhangir ahmed, patient ka naam aur chief complaint kya hai?\r\nParsed JSON:",
+  "data": {
+    "status": "incomplete",
+    "missingFields": [
+      "Patient Name",
+      "Chief Complaint",
+      "Objective Exam",
+      "Radiographic Findings",
+      "Clinical Assessment",
+      "Treatment Rendered Today",
+      "Prescriptions/Medications",
+      "Follow-up Plan"
+    ],
+    "doctorPrompt": "Dr. jhangir ahmed, patient ka naam aur chief complaint kya hai?",
+    "teethUpdates": [
+      {
+        "toothNumber": 18,
+        "status": "ROOT CANAL NEEDED"
+      }
+    ],
+    "draftNote": {
+      "summary": "Tooth number 18 ke liye root canal treatment ki zaroorat mention ki gayi hai.",
+      "chiefComplaint": "Not specified",
+      "history": "Not specified",
+      "examination": "Tooth 18 require root canal.",
+      "assessment": "Not specified",
+      "treatmentPerformed": "Not specified",
+      "postOpAdvice": "Not specified",
+      "followUp": "Not specified",
+      "prescriptions": [],
+      "treatmentPlans": [],
+      "aiWarnings": [
+        {
+          "fieldName": "Patient Name",
+          "message": "Patient name is missing from the transcript.",
+          "severity": "warning"
+        }
+      ]
+    }
+  }
+}
+
+[FULL RAW GEMINI RESPONSE PAYLOAD]:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\n  \"status\": \"incomplete\",\n  \"missingFields\": [\n    \"Patient Name\",\n    \"Chief Complaint\",\n    \"Objective Exam\",\n    \"Radiographic Findings\",\n    \"Clinical Assessment\",\n    \"Treatment Rendered Today\",\n    \"Prescriptions/Medications\",\n    \"Follow-up Plan\"\n  ],\n  \"doctorPrompt\": \"Dr. jhangir ahmed, patient ka naam aur chief complaint kya hai?\",\n  \"teethUpdates\": [\n    {\n      \"toothNumber\": 18,\n      \"status\": \"ROOT CANAL NEEDED\"\n    }\n  ],\n  \"draftNote\": {\n    \"summary\": \"Tooth number 18 ke liye root canal treatment ki zaroorat mention ki gayi hai.\",\n    \"chiefComplaint\": \"Not specified\",\n    \"history\": \"Not specified\",\n    \"examination\": \"Tooth 18 require root canal.\",\n    \"assessment\": \"Not specified\",\n    \"treatmentPerformed\": \"Not specified\",\n    \"postOpAdvice\": \"Not specified\",\n    \"followUp\": \"Not specified\",\n    \"prescriptions\": [],\n    \"treatmentPlans\": [],\n    \"aiWarnings\": [\n      {\n        \"fieldName\": \"Patient Name\",\n        \"message\": \"Patient name is missing from the transcript.\",\n        \"severity\": \"warning\"\n      }\n    ]\n  }\n}",
+            "thoughtSignature": "El0KWwERTTIPiO+pQMnGLeQ9q329aEgcAQoABc0rF9EjiF0S2LaJS3uTl0rFi+AcuOispBW10MJzPQOGeTS080drtD08mlOpcHYSDqyfiUit/CsXhBflwaxpaaMwt2I="
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 1488,
+    "candidatesTokenCount": 308,
+    "totalTokenCount": 1796,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 1488
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "7uWearTWG_-RjuMPx5vzkAk"
+}
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #8
+[CALL TYPE]             : TEETH ODONTOGRAM BULK SYNC
+[STATUS]                : SUCCESS
+[CALL SENT TIME]        : 2026-09-08 04:27:19.022
+[RESPONSE RECEIVED TIME]: 
+[TOTAL DURATION]        : 
+[TARGET ENDPOINT]       : 
+[METADATA / PATIENT]    : Patient ID: 26 | Doctor ID: 2
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+Successfully synchronized 1 teeth observations to SQL database.
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #9
+[CALL TYPE]             : CLINICAL LOG SYNC
+[STATUS]                : SUCCESS
+[CALL SENT TIME]        : 2026-09-08 04:27:18.988
+[RESPONSE RECEIVED TIME]: 
+[TOTAL DURATION]        : 
+[TARGET ENDPOINT]       : 
+[METADATA / PATIENT]    : Patient ID: 26 | Doctor ID: 2
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+[LogType: AI Tooth Assessment] AI Dictation: Recorded clinical diagnoses for 1 teeth [18].
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #10
+[CALL TYPE]             : CLINICAL DENTAL SOAP NOTE GENERATION
+[STATUS]                : FAILED / ERROR
+[CALL SENT TIME]        : 2026-09-08 04:24:23.379
+[RESPONSE RECEIVED TIME]: 2026-09-08 04:24:31.227
+[TOTAL DURATION]        : 7848 ms (7.85 seconds)
+[TARGET ENDPOINT]       : https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
+[METADATA / PATIENT]    : Patient: Ehtsham Ali (ID: 26), Doctor: Super Admin, Region: NZ
+[ERROR / WARNING]       : HTTP 429: {
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+[Doctor Transcript: "tooth number 18 required root canal"]
+Full JSON Payload:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+
+[FULL RAW GEMINI RESPONSE PAYLOAD]:
+{
+  "error": {
+    "code": 429,
+    "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash\nPlease retry in 29.035331615s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.Help",
+        "links": [
+          {
+            "description": "Learn more about Gemini API quotas",
+            "url": "https://ai.google.dev/gemini-api/docs/rate-limits"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [
+          {
+            "quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+            "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+            "quotaDimensions": {
+              "location": "global",
+              "model": "gemini-3.8-flash"
+            },
+            "quotaValue": "20"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        "retryDelay": "29s"
+      }
+    ]
+  }
+}
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #11
+[CALL TYPE]             : CLINICAL DENTAL SOAP NOTE GENERATION
+[STATUS]                : FAILED / ERROR
+[CALL SENT TIME]        : 2026-09-08 04:08:18.443
+[RESPONSE RECEIVED TIME]: 2026-09-08 04:08:26.952
+[TOTAL DURATION]        : 8509 ms (8.51 seconds)
+[TARGET ENDPOINT]       : https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
+[METADATA / PATIENT]    : Patient: Ehtsham Ali (ID: 26), Doctor: jhangir ahmed, Region: PK
+[ERROR / WARNING]       : HTTP 429: {
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+[Doctor Transcript: "Click mic to start recording..."]
+Full JSON Payload:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+
+[FULL RAW GEMINI RESPONSE PAYLOAD]:
+{
+  "error": {
+    "code": 429,
+    "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash\nPlease retry in 33.339058179s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.Help",
+        "links": [
+          {
+            "description": "Learn more about Gemini API quotas",
+            "url": "https://ai.google.dev/gemini-api/docs/rate-limits"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [
+          {
+            "quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+            "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+            "quotaDimensions": {
+              "location": "global",
+              "model": "gemini-3.8-flash"
+            },
+            "quotaValue": "20"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        "retryDelay": "33s"
+      }
+    ]
+  }
+}
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #12
+[CALL TYPE]             : CLINICAL DENTAL SOAP NOTE GENERATION
+[STATUS]                : FAILED / ERROR
+[CALL SENT TIME]        : 2026-09-08 02:15:58.639
+[RESPONSE RECEIVED TIME]: 2026-09-08 02:16:06.434
+[TOTAL DURATION]        : 7795 ms (7.80 seconds)
+[TARGET ENDPOINT]       : https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
+[METADATA / PATIENT]    : Patient: Ehtsham Ali (ID: 26), Doctor: jhangir ahmed, Region: PK
+[ERROR / WARNING]       : HTTP 429: {
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+[Doctor Transcript: "Click mic to start recording..."]
+Full JSON Payload:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+
+[FULL RAW GEMINI RESPONSE PAYLOAD]:
+{
+  "error": {
+    "code": 429,
+    "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash\nPlease retry in 53.838636454s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.Help",
+        "links": [
+          {
+            "description": "Learn more about Gemini API quotas",
+            "url": "https://ai.google.dev/gemini-api/docs/rate-limits"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [
+          {
+            "quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+            "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+            "quotaDimensions": {
+              "location": "global",
+              "model": "gemini-3.8-flash"
+            },
+            "quotaValue": "20"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        "retryDelay": "53s"
+      }
+    ]
+  }
+}
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #13
+[CALL TYPE]             : CLINICAL DENTAL SOAP NOTE GENERATION
+[STATUS]                : FAILED / ERROR
+[CALL SENT TIME]        : 2026-09-08 02:14:15.936
+[RESPONSE RECEIVED TIME]: 2026-09-08 02:14:23.779
+[TOTAL DURATION]        : 7842 ms (7.84 seconds)
+[TARGET ENDPOINT]       : https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
+[METADATA / PATIENT]    : Patient: Ehtsham Ali (ID: 26), Doctor: jhangir ahmed, Region: PK
+[ERROR / WARNING]       : HTTP 429: {
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+[Doctor Transcript: "Click mic to start recording..."]
+Full JSON Payload:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+
+[FULL RAW GEMINI RESPONSE PAYLOAD]:
+{
+  "error": {
+    "code": 429,
+    "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash\nPlease retry in 36.594366802s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.Help",
+        "links": [
+          {
+            "description": "Learn more about Gemini API quotas",
+            "url": "https://ai.google.dev/gemini-api/docs/rate-limits"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [
+          {
+            "quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+            "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+            "quotaDimensions": {
+              "location": "global",
+              "model": "gemini-3.8-flash"
+            },
+            "quotaValue": "20"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        "retryDelay": "36s"
+      }
+    ]
+  }
+}
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+LOG ENTRY #14
+[CALL TYPE]             : CLINICAL DENTAL SOAP NOTE GENERATION
+[STATUS]                : FAILED / ERROR
+[CALL SENT TIME]        : 2026-09-08 02:12:41.799
+[RESPONSE RECEIVED TIME]: 2026-09-08 02:12:49.531
+[TOTAL DURATION]        : 7732 ms (7.73 seconds)
+[TARGET ENDPOINT]       : https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
+[METADATA / PATIENT]    : Patient: Ehtsham Ali (ID: 26), Doctor: Super Admin, Region: NZ
+[ERROR / WARNING]       : HTTP 429: {
+
+>>> [DOCTOR SPOKEN TRANSCRIPTION SENT FROM MIC]:
+[Doctor Transcript: "test auth 2"]
+Full JSON Payload:
+
+>>> [GEMINI AI RESPONSE / OUTPUT]:
+
+[FULL RAW GEMINI RESPONSE PAYLOAD]:
+{
+  "error": {
+    "code": 429,
+    "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash\nPlease retry in 10.799585612s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.Help",
+        "links": [
+          {
+            "description": "Learn more about Gemini API quotas",
+            "url": "https://ai.google.dev/gemini-api/docs/rate-limits"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [
+          {
+            "quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+            "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+            "quotaDimensions": {
+              "location": "global",
+              "model": "gemini-3.8-flash"
+            },
+            "quotaValue": "20"
+          }
+        ]
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        "retryDelay": "10s"
+      }
+    ]
+  }
+}
+--------------------------------------------------------------------------------

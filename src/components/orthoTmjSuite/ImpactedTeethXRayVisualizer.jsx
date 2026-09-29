@@ -3,22 +3,45 @@ import { AlertTriangle, ShieldCheck, Check, Sparkles, Layers, Eye, Save, Volume2
 
 export default function ImpactedTeethXRayVisualizer({
   patientId,
+  liveOrthoAssessment = null,
   initialImpaction = 'mesioangular',
   initialAngulation = 45,
+  initialCanineAngulation = 35,
+  initialNerveDistance = 0.5,
+  initialEruptionPercent = 35,
   onSaveAssessment
 }) {
-  const [selectedImpaction, setSelectedImpaction] = useState(initialImpaction);
-  const [angulationDegrees, setAngulationDegrees] = useState(initialAngulation || 45);
-  const [nerveDistanceMm, setNerveDistanceMm] = useState(0.5); // 0.0mm to 5.0mm for Horizontal
-  const [canineAngulation, setCanineAngulation] = useState(35); // 15° to 65° for Palatal Canine
-  const [eruptionCoveragePct, setEruptionCoveragePct] = useState(35); // 10% to 80% for Premolar
+  const [selectedImpaction, setSelectedImpaction] = useState(() => liveOrthoAssessment?.impaction_type || initialImpaction || 'mesioangular');
+  const [angulationDegrees, setAngulationDegrees] = useState(() => liveOrthoAssessment?.angulation_degrees || initialAngulation || 45);
+  const [nerveDistanceMm, setNerveDistanceMm] = useState(() => liveOrthoAssessment?.nerve_distance_mm ?? initialNerveDistance ?? 0.5);
+  const [canineAngulation, setCanineAngulation] = useState(() => liveOrthoAssessment?.canine_angulation || (liveOrthoAssessment?.impaction_type === 'canine' ? liveOrthoAssessment?.angulation_degrees : null) || initialCanineAngulation || 35);
+  const [eruptionCoveragePct, setEruptionCoveragePct] = useState(() => liveOrthoAssessment?.eruption_percent ?? initialEruptionPercent ?? 35);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  // Sync with initial props
+  // Sync with live assessment and props
   useEffect(() => {
-    if (initialImpaction) setSelectedImpaction(initialImpaction);
-    if (initialAngulation) setAngulationDegrees(initialAngulation);
-  }, [initialImpaction, initialAngulation]);
+    if (liveOrthoAssessment) {
+      console.log('⚡ [ImpactedTeethXRayVisualizer:Sync] Received assessment:', liveOrthoAssessment);
+      if (liveOrthoAssessment.impaction_type) setSelectedImpaction(liveOrthoAssessment.impaction_type);
+      if (liveOrthoAssessment.angulation_degrees !== undefined && liveOrthoAssessment.angulation_degrees !== null) {
+        setAngulationDegrees(liveOrthoAssessment.angulation_degrees);
+      }
+      if (liveOrthoAssessment.canine_angulation !== undefined && liveOrthoAssessment.canine_angulation !== null) {
+        setCanineAngulation(liveOrthoAssessment.canine_angulation);
+      } else if (liveOrthoAssessment.impaction_type === 'canine' && liveOrthoAssessment.angulation_degrees) {
+        setCanineAngulation(liveOrthoAssessment.angulation_degrees);
+      }
+      if (liveOrthoAssessment.nerve_distance_mm !== undefined && liveOrthoAssessment.nerve_distance_mm !== null) {
+        setNerveDistanceMm(liveOrthoAssessment.nerve_distance_mm);
+      }
+      if (liveOrthoAssessment.eruption_percent !== undefined && liveOrthoAssessment.eruption_percent !== null) {
+        setEruptionCoveragePct(liveOrthoAssessment.eruption_percent);
+      }
+    } else {
+      if (initialImpaction) setSelectedImpaction(initialImpaction);
+      if (initialAngulation) setAngulationDegrees(initialAngulation);
+    }
+  }, [liveOrthoAssessment, initialImpaction, initialAngulation]);
 
   const impactionTypes = [
     { id: 'mesioangular', label: 'Mesioangular Wisdom Molar', icon: '📐', cdt: 'D7230', badge: 'Angled Under Gum 45°', defaultTeeth: [17, 32] },
@@ -27,22 +50,55 @@ export default function ImpactedTeethXRayVisualizer({
     { id: 'premolar', label: 'Partially Erupted Premolar', icon: '🔴', cdt: 'D7220', badge: 'Pericoronal Flap', defaultTeeth: [4, 5, 12, 13, 20, 21, 28, 29] }
   ];
 
+  const notifyAssessmentChange = (overrides = {}) => {
+    if (!onSaveAssessment) return;
+    const type = overrides.impaction_type || selectedImpaction;
+    const ang = overrides.angulation_degrees !== undefined ? overrides.angulation_degrees : (type === 'horizontal' ? 90 : (type === 'canine' ? canineAngulation : angulationDegrees));
+    const canAng = overrides.canine_angulation !== undefined ? overrides.canine_angulation : canineAngulation;
+    const nDist = overrides.nerve_distance_mm !== undefined ? overrides.nerve_distance_mm : nerveDistanceMm;
+    const erupt = overrides.eruption_percent !== undefined ? overrides.eruption_percent : eruptionCoveragePct;
+    const cdt = type === 'horizontal' ? 'D7240' : type === 'canine' ? 'D7280' : type === 'premolar' ? 'D7220' : 'D7230';
+
+    onSaveAssessment({
+      suite_category: 'impactions',
+      impaction_type: type,
+      angulation_degrees: ang,
+      canine_angulation: canAng,
+      nerve_distance_mm: nDist,
+      eruption_percent: erupt,
+      cdt_code: cdt,
+      ...overrides
+    });
+  };
+
   const handleSelectType = (typeId) => {
     setSelectedImpaction(typeId);
     let targetAngulation = angulationDegrees;
     if (typeId === 'horizontal') targetAngulation = 90;
     else if (typeId === 'mesioangular') targetAngulation = 45;
-    else if (typeId === 'canine') targetAngulation = 35;
+    else if (typeId === 'canine') targetAngulation = canineAngulation;
     setAngulationDegrees(targetAngulation);
+    // Auto-save disabled; manual save button required to persist to patient record
+  };
 
-    if (onSaveAssessment) {
-      onSaveAssessment({
-        suite_category: 'impactions',
-        impaction_type: typeId,
-        angulation_degrees: targetAngulation,
-        cdt_code: typeId === 'horizontal' ? 'D7240' : typeId === 'canine' ? 'D7280' : typeId === 'premolar' ? 'D7220' : 'D7230'
-      });
-    }
+  const handleAngulationChange = (val) => {
+    const num = parseInt(val, 10);
+    setAngulationDegrees(num);
+  };
+
+  const handleNerveDistanceChange = (val) => {
+    const num = parseFloat(val);
+    setNerveDistanceMm(num);
+  };
+
+  const handleCanineAngulationChange = (val) => {
+    const num = parseInt(val, 10);
+    setCanineAngulation(num);
+  };
+
+  const handleEruptionPercentChange = (val) => {
+    const num = parseInt(val, 10);
+    setEruptionCoveragePct(num);
   };
 
   const handleSaveToPatientRecord = () => {
@@ -50,16 +106,9 @@ export default function ImpactedTeethXRayVisualizer({
     const cdt = currentObj?.cdt || 'D7230';
     const title = currentObj?.label || 'Impacted Tooth';
 
-    if (onSaveAssessment) {
-      onSaveAssessment({
-        suite_category: 'impactions',
-        impaction_type: selectedImpaction,
-        angulation_degrees: selectedImpaction === 'horizontal' ? 90 : (selectedImpaction === 'canine' ? canineAngulation : angulationDegrees),
-        nerve_distance_mm: nerveDistanceMm,
-        eruption_percent: eruptionCoveragePct,
-        cdt_code: cdt
-      });
-    }
+    notifyAssessmentChange({
+      isManualSave: true
+    });
 
     // Audible confirmation
     try {
@@ -322,7 +371,7 @@ export default function ImpactedTeethXRayVisualizer({
                   min="20"
                   max="75"
                   value={angulationDegrees}
-                  onChange={(e) => setAngulationDegrees(parseInt(e.target.value))}
+                  onChange={(e) => handleAngulationChange(e.target.value)}
                   className="w-full accent-purple-700 cursor-pointer"
                 />
                 <div className="flex justify-between text-[9px] font-bold text-slate-500">
@@ -351,7 +400,7 @@ export default function ImpactedTeethXRayVisualizer({
                   max="5.0"
                   step="0.1"
                   value={nerveDistanceMm}
-                  onChange={(e) => setNerveDistanceMm(parseFloat(e.target.value))}
+                  onChange={(e) => handleNerveDistanceChange(e.target.value)}
                   className="w-full accent-purple-700 cursor-pointer"
                 />
                 <div className="flex justify-between text-[9px] font-bold text-slate-500">
@@ -377,7 +426,7 @@ export default function ImpactedTeethXRayVisualizer({
                   min="15"
                   max="65"
                   value={canineAngulation}
-                  onChange={(e) => setCanineAngulation(parseInt(e.target.value))}
+                  onChange={(e) => handleCanineAngulationChange(e.target.value)}
                   className="w-full accent-purple-700 cursor-pointer"
                 />
                 <div className="flex justify-between text-[9px] font-bold text-slate-500">
@@ -403,7 +452,7 @@ export default function ImpactedTeethXRayVisualizer({
                   min="10"
                   max="80"
                   value={eruptionCoveragePct}
-                  onChange={(e) => setEruptionCoveragePct(parseInt(e.target.value))}
+                  onChange={(e) => handleEruptionPercentChange(e.target.value)}
                   className="w-full accent-purple-700 cursor-pointer"
                 />
                 <div className="flex justify-between text-[9px] font-bold text-slate-500">

@@ -86,31 +86,69 @@ namespace DentistAPI.Services
                 };
 
                 var jsonBody = JsonSerializer.Serialize(requestBody);
-                var request = new HttpRequestMessage(HttpMethod.Post, $"https://generativelanguage.googleapis.com/v1beta/models/{_modelName}:generateContent");
+                var endpointUrl = $"https://generativelanguage.googleapis.com/v1beta/models/{_modelName}:generateContent";
+                var request = new HttpRequestMessage(HttpMethod.Post, endpointUrl);
                 request.Headers.Add("x-goog-api-key", _apiKey);
                 request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
 
                 Console.WriteLine("[STT LOG] Sending request to Gemini Content Generation API...");
-                var response = await _httpClient.SendAsync(request);
+                var startTime = DateTime.Now;
+                HttpResponseMessage response;
+                string responseString = "";
+                    response = await _httpClient.SendAsync(request);
+                    var endTime = DateTime.Now;
+                    responseString = await response.Content.ReadAsStringAsync();
 
-                if (!response.IsSuccessStatusCode)
-                {
-                    var err = await response.Content.ReadAsStringAsync();
-                    Console.WriteLine($"[STT LOG] Gemini API transcription failed: {response.StatusCode} - {err}");
-                    throw new Exception($"Gemini STT API error: {response.StatusCode} - {err}");
-                }
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        Console.WriteLine($"[STT LOG] Gemini API transcription failed: {response.StatusCode} - {responseString}");
+                        GeminiCallLogger.LogCall(
+                            callType: "MIC SPEECH-TO-TEXT TRANSCRIPTION",
+                            endpoint: endpointUrl,
+                            requestPayload: $"[Audio Size: {audioBytes.Length} bytes, MIME: {geminiMimeType}, Base64 Length: {base64Audio.Length}]\nPrompt: Transcribe the spoken audio verbatim in clean Roman Urdu and English.\nFull JSON Body:\n{jsonBody}",
+                            responseData: responseString,
+                            startTime: startTime,
+                            endTime: endTime,
+                            isSuccess: false,
+                            errorMessage: $"HTTP {response.StatusCode}"
+                        );
+                        throw new Exception($"Gemini STT API error: {response.StatusCode} - {responseString}");
+                    }
 
-                var responseString = await response.Content.ReadAsStringAsync();
-                using var doc = JsonDocument.Parse(responseString);
-                var rawTranscription = doc.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString()?.Trim() ?? "";
+                    using var doc = JsonDocument.Parse(responseString);
+                    var rawTranscription = doc.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString()?.Trim() ?? "";
 
-                var transcription = DeduplicateRepeatedPhrases(rawTranscription);
-                Console.WriteLine($"[STT LOG] Transcription received & deduplicated: '{transcription}'");
-                return transcription;
+                    var transcription = DeduplicateRepeatedPhrases(rawTranscription);
+                    Console.WriteLine($"[STT LOG] Transcription received & deduplicated: '{transcription}'");
+
+                    GeminiCallLogger.LogCall(
+                        callType: "MIC SPEECH-TO-TEXT TRANSCRIPTION",
+                        endpoint: endpointUrl,
+                        requestPayload: $"[Doctor Speech Audio: {audioBytes.Length} bytes, MIME: {geminiMimeType}, Base64 Chars: {base64Audio.Length}]\nJSON Request Payload:\n{jsonBody}",
+                        responseData: responseString,
+                        startTime: startTime,
+                        endTime: endTime,
+                        isSuccess: true,
+                        extractedResult: $"Final Transcribed Text: \"{transcription}\"\n(Raw Gemini Candidate Text: \"{rawTranscription}\")",
+                        additionalNotes: $"Model: {_modelName}, Audio Duration/Bytes: {audioBytes.Length} bytes"
+                    );
+
+                    return transcription;
             }
             catch (Exception ex)
             {
+                var endTime = DateTime.Now;
                 Console.WriteLine($"[STT LOG] Exception in GeminiSpeechToTextService: {ex.Message}");
+                GeminiCallLogger.LogCall(
+                    callType: "MIC SPEECH-TO-TEXT TRANSCRIPTION",
+                    endpoint: $"https://generativelanguage.googleapis.com/v1beta/models/{_modelName}:generateContent",
+                    requestPayload: $"[Doctor Speech Audio: {audioBytes.Length} bytes, MIME: {mimeType}]",
+                    responseData: ex.Message,
+                    startTime: DateTime.Now,
+                    endTime: endTime,
+                    isSuccess: false,
+                    errorMessage: ex.Message
+                );
                 return "Patient is here for dental consultation and examination.";
             }
         }

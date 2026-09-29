@@ -13,7 +13,6 @@ dist-ssr
 *.local
 .env
 .env.*
-DentistAPI/wwwroot/
 
 # Editor directories and files
 .vscode/*
@@ -25,9 +24,25 @@ DentistAPI/wwwroot/
 *.njsproj
 *.sln
 *.sw?
+~$*
+scratch/
+Dentistfrontend/
+DentistAPIClone/
 
-# .NET Build Artifacts
+# .NET build outputs
+bin/
+obj/
 **/bin/
 **/obj/
-*.user
-*.exe
+**/publish/
+
+# Obsidian local settings
+.obsidian/
+
+# Diagnostic scripts
+check_patient.ps1
+find_patient40.ps1
+
+# Compiled frontend assets in backend wwwroot
+DentistAPI/wwwroot/assets/
+DentistAPI/wwwroot/index.html

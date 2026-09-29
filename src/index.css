@@ -11,7 +11,7 @@
   --color-light-teal: #EAF0FC;
   --color-light-teal-hover: #D4E2F9;
   --color-dark-slate: #10244B;
-  --color-muted-text: #93A0AF;
+  --color-muted-text: #4A5568;
   --color-warm-cream: #F4F6FA; /* Slightly darker cream for more gradient contrast */
   --color-accent-gold: #EAA638;
 }
@@ -192,12 +192,37 @@ html, body, #root {
     filter: drop-shadow(0 4px 12px rgba(74, 124, 210, 0.15));
 }
 
-.no-scrollbar::-webkit-scrollbar {
+.no-scrollbar::-webkit-scrollbar,
+.scrollbar-hide::-webkit-scrollbar {
     display: none;
 }
-.no-scrollbar {
+.no-scrollbar,
+.scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
+}
+
+/* Sleek Modern UI Scrollbar */
+.modern-scrollbar {
+  overflow-y: auto;
+  overflow-x: hidden !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+}
+.modern-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 0px;
+}
+.modern-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.modern-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+  transition: background-color 0.2s ease;
+}
+.modern-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.65);
 }
 
 @media (max-width: 1024px) {
@@ -286,5 +311,21 @@ html, body, #root {
   height: 100%;
   pointer-events: auto;
   transition: transform 0.25s ease, filter 0.25s ease;
+}
+
+/* Sleek custom scrollbars for form panels & popovers */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(74, 124, 210, 0.6);
 }
 

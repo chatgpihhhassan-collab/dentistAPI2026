@@ -1,0 +1,2276 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate, Link, useSearchParams, useLocation } from 'react-router-dom';
+import { 
+    Calendar as CalendarIcon, 
+    Clock, 
+    User, 
+    Sparkles, 
+    ShieldCheck, 
+    CheckCircle2, 
+    AlertCircle, 
+    ArrowLeft, 
+    ArrowRight, 
+    Stethoscope, 
+    Smile, 
+    FileText, 
+    MapPin, 
+    Download, 
+    CreditCard, 
+    Banknote, 
+    Receipt, 
+    Lock, 
+    Check, 
+    ChevronRight,
+    Users,
+    Search,
+    RefreshCw,
+    Layers,
+    Tag,
+    Info,
+    Award,
+    Building2,
+    GraduationCap,
+    X,
+    BadgeCheck,
+    Star,
+    Plus
+} from 'lucide-react';
+import API_BASE_URL from '../../../config/apiConfig';
+import { 
+    safeFetchJson, 
+    DEFAULT_CLINIC_DOCTORS,
+    getDoctorProceduresFallback
+} from '../../../utils/safeApiUtils';
+
+// Color themes tailored for clinical dental procedure categories
+const categoryBadgeColors = {
+    'Examination & Diagnosis': 'bg-sky-50 text-sky-700 border-sky-200',
+    'Preventive Dentistry': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    'Fillings & Restorative Treatment': 'bg-teal-50 text-teal-700 border-teal-200',
+    'Crowns & Bridges': 'bg-amber-50 text-amber-700 border-amber-200',
+    'Root Canal Treatment': 'bg-purple-50 text-purple-700 border-purple-200',
+    'Extractions & Oral Surgery': 'bg-rose-50 text-rose-700 border-rose-200',
+    'Gum / Periodontal Treatment': 'bg-cyan-50 text-cyan-700 border-cyan-200',
+    'Dentures': 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    'Dental Implants': 'bg-blue-50 text-blue-700 border-blue-200',
+    'Cosmetic Dentistry': 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
+    'Orthodontics': 'bg-violet-50 text-violet-700 border-violet-200',
+    'Pediatric Dentistry': 'bg-orange-50 text-orange-700 border-orange-200',
+    'Emergency Dental Treatment': 'bg-red-50 text-red-700 border-red-200',
+    'Prosthetic / Laboratory Procedures': 'bg-slate-100 text-slate-700 border-slate-300',
+    'Other Dental Services': 'bg-emerald-50/80 text-emerald-800 border-emerald-200'
+};
+
+export default function PatientBookAppointment() {
+    const navigate = useNavigate();
+    const location = useLocation();
+
+    // Standard fallback services in case API connection is establishing
+    const fallbackServices = [
+        { 
+            procedureCode: '011', 
+            procedureName: 'Comprehensive Oral Examination & Consultation', 
+            estimatedDuration: '45 mins', 
+            standardFee: 85.00,
+            category: 'Examination & Diagnosis',
+            description: 'Comprehensive dental examination, ultrasonic scaling, plaque removal & polish.'
+        },
+        { 
+            procedureCode: '012', 
+            procedureName: 'Periodic Dental Checkup & Cleaning', 
+            estimatedDuration: '30 mins', 
+            standardFee: 65.00,
+            category: 'Preventive Dentistry',
+            description: 'Routine six-month clinical oral review, prophylaxis cleaning & fluoride therapy.'
+        },
+        { 
+            procedureCode: '531', 
+            procedureName: 'Composite Filling & Tooth Restoration', 
+            estimatedDuration: '60 mins', 
+            standardFee: 150.00,
+            category: 'Fillings & Restorative Treatment',
+            description: 'Tooth-colored aesthetic resin restoration for cavities, fractured enamel or decay.'
+        },
+        { 
+            procedureCode: '311', 
+            procedureName: 'Tooth Extraction & Oral Surgery', 
+            estimatedDuration: '45 mins', 
+            standardFee: 160.00,
+            category: 'Extractions & Oral Surgery',
+            description: 'Gentle surgical or routine tooth removal with local anesthetic and care kit.'
+        },
+        { 
+            procedureCode: '411', 
+            procedureName: 'Root Canal Endodontic Therapy', 
+            estimatedDuration: '60 mins', 
+            standardFee: 350.00,
+            category: 'Root Canal Treatment',
+            description: 'Complete extirpation, pulp canal disinfection, and sterile root canal filling.'
+        },
+        { 
+            procedureCode: '119', 
+            procedureName: 'Cosmetic Teeth Whitening Consultation', 
+            estimatedDuration: '45 mins', 
+            standardFee: 250.00,
+            category: 'Cosmetic Dentistry',
+            description: 'Professional chairside power bleaching and custom-molded shade consultation.'
+        }
+    ];
+
+    const patient = JSON.parse(localStorage.getItem('patient') || '{}');
+    const patientName = (patient.firstName && patient.lastName) 
+        ? `${patient.firstName} ${patient.lastName}` 
+        : (patient.firstName || 'Patient');
+
+    const [searchParams] = useSearchParams();
+    const urlDoctorParam = searchParams.get('doctor') || searchParams.get('doctorId') || searchParams.get('doc');
+    const urlProcedureParam = searchParams.get('procedure') || searchParams.get('procedureCode') || searchParams.get('service');
+    const stateDoctorId = location.state?.doctorId || location.state?.doctor?.doctorID || location.state?.doctor?.DoctorID || location.state?.doctor?.id;
+    const requestedDoctorId = urlDoctorParam || stateDoctorId;
+
+    // 1. Doctors State (Fetched dynamically from Database)
+    const [doctors, setDoctors] = useState([]);
+    const [loadingDoctors, setLoadingDoctors] = useState(true);
+    const [selectedDoctorId, setSelectedDoctorId] = useState(() => {
+        if (requestedDoctorId && !isNaN(Number(requestedDoctorId))) return Number(requestedDoctorId);
+        if (patient.doctorID && !isNaN(Number(patient.doctorID))) return Number(patient.doctorID);
+        if (patient.doctorId && !isNaN(Number(patient.doctorId))) return Number(patient.doctorId);
+        return 2; // Default to Dr. Jhangir Ahmed
+    });
+
+    useEffect(() => {
+        const targetId = urlDoctorParam || stateDoctorId;
+        if (targetId && !isNaN(Number(targetId))) {
+            setSelectedDoctorId(Number(targetId));
+        }
+    }, [urlDoctorParam, stateDoctorId]);
+
+    // 2. Doctor Treatment Plans / Procedures State (Fetched dynamically based on selectedDoctorId)
+    const [doctorProcedures, setDoctorProcedures] = useState([]);
+    const [loadingProcedures, setLoadingProcedures] = useState(false);
+    const [doctorCurrency, setDoctorCurrency] = useState('NZD');
+    const [selectedProcedureKeys, setSelectedProcedureKeys] = useState([]);
+    const [selectedCategory, setSelectedCategory] = useState('All');
+    const [procedureSearch, setProcedureSearch] = useState('');
+    const [bookingMode, setBookingMode] = useState('consultation'); // 'consultation' (Option A - No plan needed) | 'procedures' (Option B - Specific plan)
+    const [showFeeScheduleModal, setShowFeeScheduleModal] = useState(false);
+    const [modalCategoryFilter, setModalCategoryFilter] = useState('All');
+    const [modalSearchQuery, setModalSearchQuery] = useState('');
+
+    // Doctor Profile Inspection Modal State
+    const [previewDoctor, setPreviewDoctor] = useState(null);
+
+    // Parse organization history safely (supports JSON array or string)
+    const parseDoctorOrgs = (orgData) => {
+        if (!orgData) return [];
+        if (Array.isArray(orgData)) return orgData;
+        try {
+            const parsed = JSON.parse(orgData);
+            if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+            return String(orgData).split('\n').filter(Boolean).map(line => ({
+                organization: line,
+                role: 'Clinical Affiliation',
+                period: 'Clinical Experience',
+                description: ''
+            }));
+        }
+        return [];
+    };
+
+    // 3. Time Slots Categorized
+    const morningSlots = ['09:00 AM', '09:45 AM', '10:30 AM', '11:15 AM', '12:00 PM'];
+    const afternoonSlots = ['02:00 PM', '02:45 PM', '03:30 PM', '04:15 PM', '05:00 PM'];
+
+    // Quick Reason / Symptom Chips
+    const quickReasons = [
+        'Routine Cleaning',
+        'Toothache / Acute Pain',
+        'Cavity Filling',
+        'Crown / Root Canal Review',
+        'Aligners Check'
+    ];
+
+    // Date calculations
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const minDateStr = tomorrow.toISOString().split('T')[0];
+
+    // Upcoming 7 Days Interactive Strip
+    const upcomingDays = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() + (i + 1));
+        const iso = d.toISOString().split('T')[0];
+        const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
+        const monthName = d.toLocaleDateString('en-US', { month: 'short' });
+        const dayNum = d.getDate();
+        let badge = dayName;
+        if (i === 0) badge = 'Tomorrow';
+        return { iso, dayName, monthName, dayNum, badge };
+    });
+
+    // Stepper state (1: Specialist, 2: Treatment, 3: Date/Time, 4: Payment)
+    const [currentStep, setCurrentStep] = useState(1);
+
+    // Date & Time selections
+    const [preferredDate, setPreferredDate] = useState(minDateStr);
+    const [preferredTime, setPreferredTime] = useState('10:30 AM');
+    const [reason, setReason] = useState('');
+    const [showCustomCalendar, setShowCustomCalendar] = useState(false);
+
+    // Payment state ('Cash' | 'Online_Card')
+    const [paymentMethod, setPaymentMethod] = useState('Cash');
+    const [cardHolder, setCardHolder] = useState(patientName);
+    const [cardNumber, setCardNumber] = useState('');
+    const [cardExpiry, setCardExpiry] = useState('');
+    const [cardCvc, setCardCvc] = useState('');
+
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    const [bookingSuccess, setBookingSuccess] = useState(null);
+
+    // =========================================================================
+    // 1. FETCH LIVE DOCTORS FROM DATABASE
+    // =========================================================================
+    useEffect(() => {
+        let isMounted = true;
+        const loadRealDoctors = async () => {
+            try {
+                setLoadingDoctors(true);
+                const endpoints = [
+                    `${API_BASE_URL}/api/patient-portal/doctors`,
+                    'https://dentist-api-dev.vitonta.com/api/patient-portal/doctors',
+                    '/api/patient-portal/doctors',
+                    `${API_BASE_URL}/api/auth/doctors`,
+                    'https://dentist-api-dev.vitonta.com/api/auth/doctors',
+                    '/api/auth/doctors'
+                ];
+                const result = await safeFetchJson(endpoints);
+                const rawList = (result.ok && Array.isArray(result.data) && result.data.length > 0)
+                    ? result.data
+                    : DEFAULT_CLINIC_DOCTORS;
+
+                if (isMounted) {
+                    const mapped = rawList.map(d => {
+                        const docId = Number(d.doctorID ?? d.DoctorID ?? d.id ?? d.DoctorId);
+                        const first = (d.firstName || '').trim();
+                        const last = (d.lastName || '').trim();
+                        let fullName = d.fullName;
+                        if (first || last) {
+                            const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '';
+                            fullName = `Dr. ${cap(first)} ${cap(last)}`.trim();
+                        } else if (!fullName || !fullName.startsWith('Dr.')) {
+                            fullName = fullName ? `Dr. ${fullName}` : 'Dr. Specialist';
+                        }
+                        const docRegion = d.region || 'NZ';
+                        const title = d.title || (docRegion === 'PK' ? 'Consultant Dental Surgeon' : 'Dental Surgeon & Specialist');
+                        const exp = d.exp || `${d.yearsOfExperience || (docId === 2 ? 15 : (docId === 4 ? 12 : 9))} yrs exp`;
+                        const avatar = d.avatar || d.profileImageUrl || (
+                            docId === 2
+                                ? 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=200'
+                                : (docId === 4
+                                    ? 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=200'
+                                    : 'https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&q=80&w=200')
+                        );
+
+                        return {
+                            id: docId,
+                            doctorID: docId,
+                            name: fullName,
+                            fullName,
+                            title,
+                            exp,
+                            yearsOfExperience: d.yearsOfExperience || (docId === 2 ? 14 : (docId === 4 ? 9 : 11)),
+                            region: docRegion,
+                            avatar,
+                            specialization: d.specialization || 'General & Restorative Dentistry',
+                            biography: d.biography,
+                            organizationWorkHistory: d.organizationWorkHistory,
+                            education: d.education,
+                            certifications: d.certifications,
+                            languages: d.languages || 'English, Urdu',
+                            rating: d.rating || 4.9,
+                            reviewCount: d.reviewCount || 28,
+                            organizationID: d.organizationID,
+                            organizationName: d.organizationName,
+                            organizationLogoUrl: d.organizationLogoUrl,
+                            organizationCity: d.organizationCity,
+                            hospitalDepartment: d.hospitalDepartment,
+                            consultationFee: d.consultationFee
+                        };
+                    });
+
+                    setDoctors(mapped);
+
+                    // Doctor selection priority:
+                    // 1. Explicitly requested doctor from URL query param (e.g. ?doctor=4) or navigation state
+                    // 2. Currently selected doctor in component state (if valid)
+                    // 3. Logged-in patient's assigned doctor from profile
+                    // 4. First doctor in mapped list
+                    const explicitId = urlDoctorParam || stateDoctorId;
+                    let targetDoc = null;
+
+                    if (explicitId) {
+                        const numReq = Number(explicitId);
+                        if (!isNaN(numReq) && numReq > 0) {
+                            targetDoc = mapped.find(m => Number(m.id) === numReq || Number(m.doctorID) === numReq);
+                        }
+                        if (!targetDoc && typeof explicitId === 'string') {
+                            const q = explicitId.toLowerCase().replace('dr.', '').trim();
+                            targetDoc = mapped.find(m => m.name?.toLowerCase().includes(q));
+                        }
+                    }
+
+                    if (!targetDoc && selectedDoctorId) {
+                        const curNum = Number(selectedDoctorId);
+                        targetDoc = mapped.find(m => Number(m.id) === curNum || Number(m.doctorID) === curNum);
+                    }
+
+                    if (!targetDoc) {
+                        const assignedId = Number(patient.doctorID || patient.doctorId);
+                        if (assignedId) {
+                            targetDoc = mapped.find(m => Number(m.id) === assignedId || Number(m.doctorID) === assignedId);
+                        }
+                    }
+
+                    if (!targetDoc && mapped.length > 0) {
+                        targetDoc = mapped[0];
+                    }
+
+                    if (targetDoc) {
+                        setSelectedDoctorId(targetDoc.id);
+                    }
+                }
+            } catch {
+                // Keep default fallback doctors
+            } finally {
+                if (isMounted) setLoadingDoctors(false);
+            }
+        };
+
+        loadRealDoctors();
+        return () => { isMounted = false; };
+    }, [urlDoctorParam, stateDoctorId]);
+
+    // =========================================================================
+    // 2. DYNAMICALLY LOAD TREATMENT PLANS & FEE SCHEDULE FOR SELECTED DOCTOR
+    // =========================================================================
+    useEffect(() => {
+        if (!selectedDoctorId) return;
+        let isMounted = true;
+
+        const targetDoc = doctors.find(d => Number(d.id) === Number(selectedDoctorId));
+        const isPk = Number(selectedDoctorId) === 2 || targetDoc?.region === 'PK';
+        setDoctorCurrency(isPk ? 'PKR' : 'NZD');
+
+        const loadDoctorFeeSchedule = async () => {
+            try {
+                setLoadingProcedures(true);
+                const endpoints = [
+                    `${API_BASE_URL}/api/patient-portal/doctors/${selectedDoctorId}/services`,
+                    `${API_BASE_URL}/api/treatment-pricing/doctor/${selectedDoctorId}`,
+                    `https://dentist-api-dev.vitonta.com/api/patient-portal/doctors/${selectedDoctorId}/services`,
+                    `https://dentist-api-dev.vitonta.com/api/treatment-pricing/doctor/${selectedDoctorId}`,
+                    `/api/patient-portal/doctors/${selectedDoctorId}/services`,
+                    `/api/treatment-pricing/doctor/${selectedDoctorId}`
+                ];
+                const result = await safeFetchJson(endpoints);
+                const fallbackList = getDoctorProceduresFallback(selectedDoctorId, targetDoc?.region);
+
+                if (result.ok && result.data && isMounted) {
+                    const data = result.data;
+                    const procs = (data.procedures || []).filter(p => p.isActive !== false);
+                    const finalProcs = procs.length > 0 ? procs : fallbackList;
+                    setDoctorProcedures(finalProcs);
+                    const curr = data.currency || (data.region === 'PK' || isPk ? 'PKR' : 'NZD');
+                    setDoctorCurrency(curr);
+
+                    // If URL specified a procedure, auto-select it
+                    if (urlProcedureParam) {
+                        const match = finalProcs.find(p => 
+                            (p.procedureCode && p.procedureCode.toLowerCase() === urlProcedureParam.toLowerCase()) ||
+                            (p.procedureName && p.procedureName.toLowerCase().includes(urlProcedureParam.toLowerCase()))
+                        );
+                        if (match) {
+                            setSelectedProcedureKeys([match.procedureCode || match.procedureName]);
+                            setBookingMode('procedures');
+                        }
+                    } else if (finalProcs.length > 0) {
+                        setSelectedProcedureKeys(prev => {
+                            if (prev.length > 0) {
+                                const valid = prev.filter(k => finalProcs.some(p => (p.procedureCode || p.procedureName) === k));
+                                return valid;
+                            }
+                            return [];
+                        });
+                    }
+                } else if (isMounted) {
+                    // Fallback to real standard clinical services library
+                    setDoctorCurrency(isPk ? 'PKR' : 'NZD');
+                    setDoctorProcedures(fallbackList);
+                    if (urlProcedureParam) {
+                        const match = fallbackList.find(p => 
+                            (p.procedureCode && p.procedureCode.toLowerCase() === urlProcedureParam.toLowerCase()) ||
+                            (p.procedureName && p.procedureName.toLowerCase().includes(urlProcedureParam.toLowerCase()))
+                        );
+                        if (match) {
+                            setSelectedProcedureKeys([match.procedureCode || match.procedureName]);
+                            setBookingMode('procedures');
+                        }
+                    }
+                }
+            } catch {
+                if (isMounted) {
+                    const fallbackList = getDoctorProceduresFallback(selectedDoctorId, targetDoc?.region);
+                    setDoctorCurrency(isPk ? 'PKR' : 'NZD');
+                    setDoctorProcedures(fallbackList);
+                    if (urlProcedureParam) {
+                        const match = fallbackList.find(p => 
+                            (p.procedureCode && p.procedureCode.toLowerCase() === urlProcedureParam.toLowerCase()) ||
+                            (p.procedureName && p.procedureName.toLowerCase().includes(urlProcedureParam.toLowerCase()))
+                        );
+                        if (match) {
+                            setSelectedProcedureKeys([match.procedureCode || match.procedureName]);
+                            setBookingMode('procedures');
+                        }
+                    }
+                }
+            } finally {
+                if (isMounted) setLoadingProcedures(false);
+            }
+        };
+
+        loadDoctorFeeSchedule();
+        return () => { isMounted = false; };
+    }, [selectedDoctorId]);
+
+    // Active procedures list (Doctor's procedures or fallback)
+    const activeProcedures = doctorProcedures.length > 0 ? doctorProcedures : fallbackServices;
+
+    // Derived Categories
+    const categories = useMemo(() => {
+        const set = new Set(activeProcedures.map(p => p.category).filter(Boolean));
+        return ['All', ...Array.from(set)];
+    }, [activeProcedures]);
+
+    // Filtered Procedures based on category and search query
+    const filteredProcedures = useMemo(() => {
+        let list = activeProcedures;
+        if (selectedCategory !== 'All') {
+            list = list.filter(p => p.category === selectedCategory);
+        }
+        if (procedureSearch.trim()) {
+            const q = procedureSearch.toLowerCase().trim();
+            list = list.filter(p => 
+                (p.procedureName && p.procedureName.toLowerCase().includes(q)) ||
+                (p.procedureCode && p.procedureCode.toLowerCase().includes(q)) ||
+                (p.category && p.category.toLowerCase().includes(q)) ||
+                (p.description && p.description.toLowerCase().includes(q))
+            );
+        }
+        return list;
+    }, [activeProcedures, selectedCategory, procedureSearch]);
+
+    // Toggle a procedure in the multi-select set
+    const toggleProcedure = (proc) => {
+        const key = proc.procedureCode || proc.procedureName;
+        setSelectedProcedureKeys(prev => {
+            if (prev.includes(key)) {
+                return prev.filter(k => k !== key);
+            } else {
+                return [...prev, key];
+            }
+        });
+        setError('');
+    };
+
+    // Derived selected procedures list
+    const selectedProceduresList = useMemo(() => {
+        return activeProcedures.filter(p => selectedProcedureKeys.includes(p.procedureCode || p.procedureName));
+    }, [activeProcedures, selectedProcedureKeys]);
+
+    // Aggregated Fee & Summary names
+    const totalConsultationFee = useMemo(() => {
+        if (bookingMode === 'consultation' || selectedProceduresList.length === 0) {
+            return doctorCurrency === 'PKR' ? 2500 : 85.00;
+        }
+        return selectedProceduresList.reduce((sum, p) => sum + Number(p.standardFee || p.fee || 85.00), 0);
+    }, [bookingMode, selectedProceduresList, doctorCurrency]);
+
+    const combinedProceduresName = useMemo(() => {
+        if (bookingMode === 'consultation' || selectedProceduresList.length === 0) {
+            return 'General Dental Consultation & Examination';
+        }
+        return selectedProceduresList.map(p => p.procedureName || p.label).join(', ');
+    }, [bookingMode, selectedProceduresList]);
+
+    // Current selected doctor & procedure objects
+    const currentDoctor = doctors.find(d => Number(d.id) === Number(selectedDoctorId)) || doctors[0] || { 
+        id: Number(selectedDoctorId) || 2, 
+        name: 'Dr. Jhangir Ahmed', 
+        title: 'Consultant Dental Surgeon' 
+    };
+
+    const currentProcedure = selectedProceduresList[0] || activeProcedures[0] || fallbackServices[0];
+    const procedureFee = totalConsultationFee > 0 ? totalConsultationFee : Number(currentProcedure?.standardFee || currentProcedure?.fee || 85.00);
+    const procedureName = combinedProceduresName;
+    const procedureCode = selectedProceduresList.map(p => p.procedureCode).filter(Boolean).join(', ');
+
+    // Currency Formatter
+    const formatCurrency = (amount, curr) => {
+        const c = curr || doctorCurrency || 'NZD';
+        if (c === 'PKR') return `Rs ${Number(amount).toLocaleString()}`;
+        if (c === 'GBP') return `£${Number(amount).toFixed(2)}`;
+        if (c === 'EUR') return `€${Number(amount).toFixed(2)}`;
+        return `$${Number(amount).toFixed(2)} ${c}`;
+    };
+
+    // Card formatters
+    const handleCardNumberChange = (e) => {
+        const val = e.target.value.replace(/\D/g, '').slice(0, 16);
+        setCardNumber(val.replace(/(\d{4})(?=\d)/g, '$1 '));
+    };
+
+    const handleExpiryChange = (e) => {
+        const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+        if (val.length >= 3) {
+            setCardExpiry(`${val.slice(0, 2)}/${val.slice(2)}`);
+        } else {
+            setCardExpiry(val);
+        }
+    };
+
+    const formatTimeSlotToHours = (slot) => {
+        const parts = slot.split(' ');
+        const time = parts[0];
+        const modifier = parts[1];
+        let [hours, minutes] = time.split(':');
+        if (hours === '12') hours = '00';
+        if (modifier === 'PM') hours = parseInt(hours, 10) + 12;
+        return `${String(hours).padStart(2, '0')}:${minutes}`;
+    };
+
+    // Step validation & progression
+    const handleNext = () => {
+        setError('');
+        if (currentStep === 1) {
+            if (!selectedDoctorId) {
+                setError('Please select an attending specialist to view treatments.');
+                return;
+            }
+        }
+        if (currentStep === 2) {
+            if (bookingMode === 'procedures' && selectedProceduresList.length === 0) {
+                setError('Please select at least one dental treatment procedure, or choose Option A for General Consultation.');
+                return;
+            }
+        }
+        if (currentStep === 3) {
+            if (!preferredDate) {
+                setError('Please select an appointment consultation date.');
+                return;
+            }
+            const time24 = formatTimeSlotToHours(preferredTime);
+            const combinedDateTime = new Date(`${preferredDate}T${time24}:00`);
+            if (combinedDateTime < new Date()) {
+                setError('Selected appointment slot cannot be in the past. Please select an upcoming date.');
+                return;
+            }
+        }
+        setCurrentStep(prev => Math.min(4, prev + 1));
+    };
+
+    const handlePrev = () => {
+        setError('');
+        setCurrentStep(prev => Math.max(1, prev - 1));
+    };
+
+    // =========================================================================
+    // 3. FINAL APPOINTMENT SUBMISSION & BOOKING CONFIRMATION
+    // =========================================================================
+    const handleConfirmBooking = async (e) => {
+        e.preventDefault();
+        setError('');
+
+        if (!preferredDate) {
+            setError('Please choose your preferred consultation date.');
+            setCurrentStep(3);
+            return;
+        }
+
+        const time24 = formatTimeSlotToHours(preferredTime);
+        const combinedDateTime = new Date(`${preferredDate}T${time24}:00`);
+
+        if (paymentMethod === 'Online_Card') {
+            const rawCard = cardNumber.replace(/\s+/g, '');
+            if (rawCard.length < 15) {
+                setError('Please enter a valid 16-digit debit or credit card number.');
+                return;
+            }
+            if (!cardExpiry || cardExpiry.length < 5) {
+                setError('Please enter a valid expiration date (MM/YY).');
+                return;
+            }
+            const [mm] = cardExpiry.split('/').map(Number);
+            if (!mm || mm < 1 || mm > 12) {
+                setError('Card expiration month must be between 01 and 12.');
+                return;
+            }
+            if (!cardCvc || cardCvc.length < 3) {
+                setError('Please enter a valid 3-digit security code (CVC).');
+                return;
+            }
+        }
+
+        setLoading(true);
+
+        try {
+            const token = patient.token;
+            const headers = {
+                'Content-Type': 'application/json',
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            };
+
+            const isConsultOnly = bookingMode === 'consultation' || selectedProceduresList.length === 0;
+            const codeStr = (!isConsultOnly && procedureCode) ? ` [Code: ${procedureCode}]` : '';
+            const fullReason = isConsultOnly
+                ? `General Dental Consultation (${currentDoctor.name})`
+                : `${procedureName}${codeStr} (${currentDoctor.name})`;
+            const finalFee = totalConsultationFee;
+            const rawCard = cardNumber.replace(/\s+/g, '');
+            const chosenDocId = Number(currentDoctor.id || currentDoctor.doctorID || selectedDoctorId) || 2;
+            const chosenCurrency = (chosenDocId === 2 || currentDoctor?.region === 'PK') ? 'PKR' : (doctorCurrency || 'NZD');
+            const finalProcedures = isConsultOnly ? [] : selectedProceduresList.map(p => ({
+                procedureCode: p.procedureCode || '',
+                procedureName: p.procedureName || p.label || 'Dental Treatment',
+                fee: Number(p.standardFee || p.fee || 85.00),
+                category: p.category || 'General',
+                quantity: 1
+            }));
+
+            const payload = {
+                preferredDate: combinedDateTime.toISOString(),
+                reason: fullReason,
+                notes: reason ? reason.trim() : null, // Synchronized with [Appointments].Notes
+                doctorID: chosenDocId,
+                paymentMethod: paymentMethod === 'Online_Card' ? 'Online_Card' : 'Cash',
+                consultationFee: finalFee,
+                currency: chosenCurrency,
+                cardLast4: paymentMethod === 'Online_Card' ? rawCard.slice(-4) : null,
+                cardHolderName: paymentMethod === 'Online_Card' ? cardHolder.trim() : null,
+                procedures: finalProcedures
+            };
+
+            let res;
+            try {
+                res = await fetch(`${API_BASE_URL}/api/patient-portal/appointments`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload)
+                });
+            } catch {
+                res = await fetch(`/api/patient-portal/appointments`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload)
+                });
+            }
+
+            const data = await res.json();
+
+            // Guard against handled warnings or missing appointmentId
+            if (res.ok && data.status !== 'handled_warning' && (data.appointmentId || data.AppointmentId)) {
+                const apptId = data.appointmentId || data.AppointmentId;
+                const invId = data.invoiceId || data.InvoiceId;
+                const invNum = data.invoiceNumber || data.InvoiceNumber || `INV-2026-${String(apptId).padStart(5, '0')}`;
+                const rcptVoucher = data.receiptOrVoucherNumber || (paymentMethod === 'Online_Card' ? `REC-2026-${String(apptId).padStart(5, '0')}` : `CSH-2026-${String(apptId).padStart(5, '0')}`);
+
+                try {
+                    const curP = JSON.parse(localStorage.getItem('patient') || '{}');
+                    curP.doctorID = chosenDocId;
+                    localStorage.setItem('patient', JSON.stringify(curP));
+                } catch {}
+
+                setBookingSuccess({
+                    appointmentId: apptId,
+                    invoiceId: invId,
+                    invoiceNumber: invNum,
+                    paymentMethod: data.paymentMethod || paymentMethod,
+                    receiptOrVoucherNumber: rcptVoucher,
+                    invoiceStatus: data.invoiceStatus || (paymentMethod === 'Online_Card' ? 'Paid' : 'Pending Cash Settlement'),
+                    fee: procedureFee,
+                    currency: data.currency || chosenCurrency || doctorCurrency,
+                    dateTime: combinedDateTime,
+                    service: procedureName,
+                    procedures: selectedProceduresList,
+                    doctor: currentDoctor.name,
+                    message: data.message || 'Appointment and payment entry recorded successfully.'
+                });
+            } else {
+                setError(data.message || 'Unable to confirm appointment with clinic scheduling. Please try again.');
+            }
+        } catch (err) {
+            console.error('Booking failed:', err);
+            setError('Network connection error while communicating with clinic booking server.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Calendar .ics download
+    const downloadIcs = () => {
+        if (!bookingSuccess) return;
+        const start = new Date(bookingSuccess.dateTime);
+        const end = new Date(start.getTime() + 45 * 60000);
+        const formatIso = (date) => date.toISOString().replace(/-|:|\.\d+/g, '');
+
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'BEGIN:VEVENT',
+            `SUMMARY:Dentia Dental Appointment - ${bookingSuccess.service}`,
+            `DESCRIPTION:${bookingSuccess.service} with ${bookingSuccess.doctor}. Total Fee: ${formatCurrency(bookingSuccess.fee, bookingSuccess.currency)}. Payment: ${bookingSuccess.paymentMethod}`,
+            `LOCATION:Dentia Dental Clinic, Auckland CBD`,
+            `DTSTART:${formatIso(start)}`,
+            `DTEND:${formatIso(end)}`,
+            'STATUS:CONFIRMED',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\r\n');
+
+        const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = window.URL.createObjectURL(blob);
+        link.setAttribute('download', `Dentia_Appointment_${bookingSuccess.appointmentId}.ics`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    // =========================================================================
+    // CONFIRMATION VIEW (CLEAN COMPACT ZERO-SCROLL RECEIPT)
+    // =========================================================================
+    if (bookingSuccess) {
+        const isCardPaid = bookingSuccess.paymentMethod === 'Online_Card';
+
+        return (
+            <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in py-4">
+                <div className="bg-white rounded-3xl p-6 sm:p-8 border border-light-teal shadow-[0_8px_30px_rgba(16,36,75,0.05)] text-center space-y-5">
+                    
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto shadow-sm ${
+                        isCardPaid ? 'bg-emerald-50 border border-emerald-200 text-emerald-600' : 'bg-amber-50 border border-amber-200 text-amber-600'
+                    }`}>
+                        <CheckCircle2 className="w-8 h-8" />
+                    </div>
+
+                    <div className="space-y-1">
+                        <span className="px-3 py-1 rounded-full bg-light-teal text-primary-hover font-mono text-[11px] font-bold uppercase tracking-wider">
+                            Booking #{bookingSuccess.appointmentId} Confirmed
+                        </span>
+                        <h2 className="text-xl sm:text-2xl font-serif font-black text-dark-slate">
+                            {isCardPaid ? 'Appointment & Payment Confirmed!' : 'Appointment Confirmed & Voucher Issued!'}
+                        </h2>
+                        <p className="text-xs text-muted-text max-w-md mx-auto">
+                            {isCardPaid 
+                                ? 'Your card payment was processed successfully. A verified tax receipt has been logged to your ledger.'
+                                : 'Your slot is reserved. Present your cash voucher at the front desk upon clinic arrival.'}
+                        </p>
+                    </div>
+
+                    {/* Compact Card with Key Data */}
+                    <div className="p-4 bg-warm-cream rounded-2xl border border-light-teal text-left space-y-3">
+                        <div className="flex items-center justify-between border-b border-light-teal pb-2.5">
+                            <div>
+                                <p className="text-[10px] font-bold text-muted-text uppercase">Service & Clinician</p>
+                                <p className="text-xs font-bold text-dark-slate">{bookingSuccess.service} · {bookingSuccess.doctor}</p>
+                            </div>
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                isCardPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                            }`}>
+                                {isCardPaid ? 'Paid in Full' : 'Pending Cash Settlement'}
+                            </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                            <div className="p-2.5 bg-white rounded-xl border border-light-teal">
+                                <p className="text-[9px] font-bold text-muted-text uppercase">Date & Time</p>
+                                <p className="font-bold text-dark-slate mt-0.5">
+                                    {bookingSuccess.dateTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · {bookingSuccess.dateTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                </p>
+                            </div>
+                            <div className="p-2.5 bg-white rounded-xl border border-light-teal">
+                                <p className="text-[9px] font-bold text-muted-text uppercase">Invoice #</p>
+                                <p className="font-bold font-mono text-dark-slate mt-0.5">{bookingSuccess.invoiceNumber}</p>
+                            </div>
+                            <div className="p-2.5 bg-white rounded-xl border border-light-teal">
+                                <p className="text-[9px] font-bold text-muted-text uppercase">
+                                    {isCardPaid ? 'Receipt #' : 'Cash Voucher'}
+                                </p>
+                                <p className={`font-mono font-black mt-0.5 ${isCardPaid ? 'text-emerald-600' : 'text-amber-700'}`}>
+                                    {bookingSuccess.receiptOrVoucherNumber}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Booked Procedures Itemized List */}
+                        {bookingSuccess.procedures && bookingSuccess.procedures.length > 0 && (
+                            <div className="p-3 bg-white rounded-xl border border-light-teal space-y-1.5">
+                                <div className="flex items-center justify-between border-b border-light-teal/60 pb-1 text-[10px] font-bold text-muted-text uppercase tracking-wider">
+                                    <span>Selected Procedures ({bookingSuccess.procedures.length})</span>
+                                    <span>Fee</span>
+                                </div>
+                                <div className="space-y-1">
+                                    {bookingSuccess.procedures.map((p, i) => (
+                                        <div key={i} className="flex items-center justify-between text-xs py-0.5">
+                                            <span className="font-medium text-dark-slate flex items-center gap-1.5">
+                                                {p.procedureCode && (
+                                                    <span className="font-mono text-[9px] font-bold text-primary-teal bg-teal-50 px-1 py-0.2 rounded border border-teal-200">
+                                                        {p.procedureCode}
+                                                    </span>
+                                                )}
+                                                <span>{p.procedureName || p.label}</span>
+                                            </span>
+                                            <span className="font-mono font-bold text-dark-slate">
+                                                {formatCurrency(p.fee || p.standardFee || 85, bookingSuccess.currency)}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex items-center justify-between text-[11px] text-muted-text pt-1">
+                            <div className="flex items-center gap-1.5">
+                                <MapPin className="w-3.5 h-3.5 text-primary-teal" />
+                                <span>Dentia Clinic Auckland CBD / Partner Center</span>
+                            </div>
+                            <span className="font-mono font-bold text-dark-slate text-sm">
+                                {formatCurrency(bookingSuccess.fee, bookingSuccess.currency)}
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Direct Links */}
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+                        <button
+                            type="button"
+                            onClick={downloadIcs}
+                            className="w-full sm:w-auto px-4 py-2.5 bg-warm-cream hover:bg-light-teal border border-light-teal text-dark-slate font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                            <Download className="w-3.5 h-3.5 text-primary-teal" />
+                            <span>Add to Calendar (.ics)</span>
+                        </button>
+                        <Link
+                            to="/portal/billing"
+                            className="w-full sm:w-auto px-4 py-2.5 bg-light-teal hover:bg-light-teal-hover border border-light-teal text-primary-hover font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                            <Receipt className="w-3.5 h-3.5" />
+                            <span>View in Ledger</span>
+                        </Link>
+                        <Link
+                            to="/portal/appointments"
+                            className="w-full sm:w-auto px-5 py-2.5 bg-primary-teal hover:bg-primary-hover text-white font-bold text-xs rounded-xl shadow-md shadow-primary-teal/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                            <span>Appointments Hub</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                    </div>
+
+                </div>
+            </div>
+        );
+    }
+
+    // =========================================================================
+    // STEPPER WORKSPACE (Specialist -> Treatment -> Date/Time -> Payment)
+    // =========================================================================
+    const stepTitles = [
+        { num: 1, title: 'Specialist' },
+        { num: 2, title: 'Treatment' },
+        { num: 3, title: 'Date & Time' },
+        { num: 4, title: 'Payment' }
+    ];
+
+    return (
+        <div className="max-w-4xl mx-auto space-y-5 animate-in fade-in">
+            
+            {/* Top Bar with Back Link & Title */}
+            <div className="flex items-center justify-between">
+                <Link
+                    to="/portal/appointments"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-primary-teal hover:text-primary-hover transition-colors"
+                >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Back</span>
+                </Link>
+                <div className="text-center">
+                    <h1 className="text-xl sm:text-2xl font-serif font-black text-dark-slate tracking-tight">
+                        Book a Dental Consultation
+                    </h1>
+                </div>
+                <div className="text-[11px] font-mono font-bold text-muted-text">
+                    Step {currentStep} of 4
+                </div>
+            </div>
+
+            {/* Clean Horizontal Stepper Progress Bar */}
+            <div className="bg-white rounded-2xl p-2.5 border border-light-teal shadow-2xs flex items-center justify-between">
+                {stepTitles.map((st, idx) => {
+                    const isCompleted = currentStep > st.num;
+                    const isCurrent = currentStep === st.num;
+
+                    return (
+                        <React.Fragment key={st.num}>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (isCompleted) setCurrentStep(st.num);
+                                }}
+                                disabled={!isCompleted && !isCurrent}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all text-xs font-bold ${
+                                    isCurrent 
+                                        ? 'bg-primary-teal text-white shadow-xs' 
+                                        : isCompleted 
+                                            ? 'text-primary-teal hover:bg-light-teal cursor-pointer' 
+                                            : 'text-slate-400 cursor-not-allowed'
+                                }`}
+                            >
+                                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${
+                                    isCurrent 
+                                        ? 'bg-white text-primary-teal' 
+                                        : isCompleted 
+                                            ? 'bg-light-teal text-primary-teal' 
+                                            : 'bg-slate-100 text-slate-400'
+                                }`}>
+                                    {isCompleted ? <Check className="w-3 h-3 stroke-[3]" /> : st.num}
+                                </span>
+                                <span className="hidden sm:inline">{st.title}</span>
+                            </button>
+
+                            {idx < stepTitles.length - 1 && (
+                                <div className={`flex-1 h-0.5 mx-2 rounded-full transition-colors ${
+                                    currentStep > st.num ? 'bg-primary-teal' : 'bg-slate-100'
+                                }`} />
+                            )}
+                        </React.Fragment>
+                    );
+                })}
+            </div>
+
+            {/* Error Notification */}
+            {error && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs font-medium flex items-center gap-2.5 animate-in shake">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{error}</span>
+                </div>
+            )}
+
+            {/* Step Card (Zero vertical scroll design) */}
+            <div className="bg-white rounded-3xl p-5 sm:p-7 border border-light-teal shadow-[0_4px_24px_rgba(16,36,75,0.03)] min-h-[420px] flex flex-col justify-between">
+                
+                {/* ------------------------------------------------------------- */}
+                {/* STEP 1: SELECT ATTENDING SPECIALIST CLINICIAN                 */}
+                {/* ------------------------------------------------------------- */}
+                {currentStep === 1 && (
+                    <div className="space-y-4 animate-in fade-in">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h3 className="text-base font-serif font-black text-dark-slate">
+                                    1. Select Attending Specialist
+                                </h3>
+                                <p className="text-xs text-muted-text">
+                                    Choose your dentist to load their customized clinical treatment plans and pricing.
+                                </p>
+                            </div>
+                            <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                <span>Clinic Clinicians ({doctors.length})</span>
+                            </span>
+                        </div>
+
+                        {/* Pre-selected Specialist Announcement Banner */}
+                        {(urlDoctorParam || stateDoctorId) && currentDoctor && (
+                            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border border-emerald-200 text-emerald-900 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs shadow-xs animate-in fade-in">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-9 h-9 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
+                                        <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+                                    </div>
+                                    <div>
+                                        <p className="font-bold text-dark-slate flex items-center gap-1.5 flex-wrap">
+                                            <span>Doctor Selected:</span>
+                                            <span className="text-primary-teal font-serif font-black">{currentDoctor.name}</span>
+                                            {currentDoctor.specialization && (
+                                                <span className="text-[10px] font-semibold text-emerald-700 bg-white px-2 py-0.5 rounded-md border border-emerald-200">
+                                                    {currentDoctor.specialization}
+                                                </span>
+                                            )}
+                                        </p>
+                                        <p className="text-[11px] text-muted-text mt-0.5">
+                                            Pre-selected from Our Specialists directory. You can inspect profile details or choose any doctor anytime.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                                    <button
+                                        type="button"
+                                        onClick={() => setPreviewDoctor(currentDoctor)}
+                                        className="px-3 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-800 text-xs font-bold hover:bg-emerald-100 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                                    >
+                                        <Info className="w-3.5 h-3.5 text-emerald-700" />
+                                        <span>View Profile</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleNext}
+                                        className="px-4 py-2 rounded-xl bg-primary-teal hover:bg-primary-hover text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                                    >
+                                        <span>Proceed to Services</span>
+                                        <ArrowRight className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {loadingDoctors ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                                {[1, 2, 3, 4].map((i) => (
+                                    <div key={i} className="p-4 rounded-2xl border-2 border-light-teal/50 bg-white text-center animate-pulse space-y-2.5">
+                                        <div className="w-16 h-16 rounded-full bg-light-teal/60 mx-auto" />
+                                        <div className="h-4 bg-light-teal/50 rounded w-28 mx-auto" />
+                                        <div className="h-3 bg-light-teal/30 rounded w-36 mx-auto" />
+                                        <div className="h-5 bg-light-teal/40 rounded w-20 mx-auto mt-2" />
+                                    </div>
+                                ))}
+                            </div>
+                        ) : doctors.length === 0 ? (
+                            <div className="p-8 text-center bg-white rounded-2xl border border-light-teal/80 text-muted-text text-xs font-medium">
+                                No active clinicians found in the clinic directory. Please contact reception.
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                                {doctors.map((doc) => {
+                                    const isSelected = Number(selectedDoctorId) === Number(doc.id);
+                                    const isAssigned = (Number(patient.doctorID) === Number(doc.id)) || (Number(patient.doctorId) === Number(doc.id));
+
+                                    return (
+                                        <div
+                                            key={doc.id}
+                                            onClick={() => {
+                                                setSelectedDoctorId(doc.id);
+                                                setError('');
+                                            }}
+                                            className={`p-4 rounded-2xl border-2 transition-all cursor-pointer text-center relative flex flex-col justify-between ${
+                                                isSelected 
+                                                    ? 'border-primary-teal bg-light-teal/40 shadow-sm ring-2 ring-primary-teal/40 scale-[1.01]' 
+                                                    : 'border-light-teal/80 hover:border-primary-teal/40 bg-white hover:bg-warm-cream/50'
+                                            }`}
+                                        >
+                                            {isAssigned && (
+                                                <span className="absolute top-2.5 right-2.5 px-1.5 py-0.5 rounded-md bg-teal-100 text-teal-800 text-[9px] font-black uppercase tracking-wider">
+                                                    Assigned
+                                                </span>
+                                            )}
+
+                                            <div>
+                                                <div className="w-16 h-16 rounded-full overflow-hidden mx-auto mb-3 ring-2 ring-light-teal shadow-xs bg-slate-100">
+                                                    <img 
+                                                        src={doc.avatar} 
+                                                        alt={doc.name} 
+                                                        className="w-full h-full object-cover"
+                                                        onError={(e) => {
+                                                            e.target.onerror = null;
+                                                            e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(doc.name)}&background=008080&color=fff&bold=true`;
+                                                        }}
+                                                    />
+                                                </div>
+                                                <h4 className="text-xs font-black text-dark-slate">{doc.name}</h4>
+                                                <p className="text-[11px] text-muted-text mt-0.5 line-clamp-1">{doc.title}</p>
+                                            </div>
+
+                                            <div className="mt-3 pt-2.5 border-t border-light-teal/80 flex items-center justify-between">
+                                                <span className="px-2 py-0.5 rounded-md bg-white border border-light-teal text-[10px] font-bold text-primary-teal font-mono">
+                                                    {doc.region ? `${doc.region} · ` : ''}{doc.exp}
+                                                </span>
+                                                <div className={`w-5 h-5 rounded-full flex items-center justify-center transition-colors ${
+                                                    isSelected ? 'bg-primary-teal text-white' : 'border border-slate-300'
+                                                }`}>
+                                                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                                </div>
+                                            </div>
+
+                                            {/* Inspect Doctor Profile Button */}
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setPreviewDoctor(doc);
+                                                }}
+                                                className="mt-2.5 w-full py-1.5 px-2 rounded-xl bg-slate-50 hover:bg-light-teal/30 text-dark-slate border border-slate-200/80 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs hover:border-primary-teal/50 hover:text-primary-teal"
+                                            >
+                                                <Info className="w-3.5 h-3.5 text-primary-teal" />
+                                                <span>View Doctor Profile</span>
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* ------------------------------------------------------------- */}
+                {/* STEP 2: CHOOSE DOCTOR'S TREATMENT PLANS & PROCEDURES           */}
+                {/* ------------------------------------------------------------- */}
+                {currentStep === 2 && (
+                    <div className="space-y-4 animate-in fade-in">
+                        
+                        {/* Selected Doctor Summary Header + Quick Switch + Explore Catalog Button */}
+                        <div className="p-3.5 bg-warm-cream rounded-2xl border border-light-teal flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-light-teal shrink-0 bg-slate-100">
+                                    <img 
+                                        src={currentDoctor.avatar} 
+                                        alt={currentDoctor.name} 
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => {
+                                            e.target.onerror = null;
+                                            e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDoctor.name)}&background=008080&color=fff&bold=true`;
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <h3 className="text-xs font-black text-dark-slate">{currentDoctor.name}</h3>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPreviewDoctor(currentDoctor)}
+                                            className="px-2 py-0.5 rounded-md bg-white border border-light-teal/80 text-[10px] font-bold text-primary-teal hover:bg-light-teal/30 transition-colors flex items-center gap-1 cursor-pointer"
+                                        >
+                                            <Info className="w-3 h-3" />
+                                            <span>View Profile</span>
+                                        </button>
+                                        <span className="px-2 py-0.5 rounded-md bg-light-teal text-primary-hover font-mono text-[10px] font-bold">
+                                            {doctorCurrency} Fee Schedule
+                                        </span>
+                                    </div>
+                                    <p className="text-[11px] text-muted-text">
+                                        {activeProcedures.length} clinical treatment procedures available
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowFeeScheduleModal(true)}
+                                    className="px-3 py-1.5 text-[11px] font-bold text-sky-800 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                                >
+                                    <FileText className="w-3.5 h-3.5 text-sky-600" />
+                                    <span>📖 Explore Full Fee Schedule</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setCurrentStep(1)}
+                                    className="px-2.5 py-1.5 text-[11px] font-bold text-primary-teal hover:text-primary-hover bg-white hover:bg-light-teal border border-light-teal rounded-xl transition-colors cursor-pointer"
+                                >
+                                    Change Specialist
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Choice: Option A (Consultation Only) vs Option B (Select Procedures) */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {/* OPTION A: Standalone Consultation */}
+                            <div 
+                                onClick={() => {
+                                    setBookingMode('consultation');
+                                    setSelectedProcedureKeys([]);
+                                    setError('');
+                                }}
+                                className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between text-left relative ${
+                                    bookingMode === 'consultation'
+                                        ? 'border-primary-teal bg-light-teal/30 shadow-sm ring-2 ring-primary-teal/30 scale-[1.01]'
+                                        : 'border-light-teal/80 hover:border-primary-teal/40 bg-white hover:bg-warm-cream/40'
+                                }`}
+                            >
+                                <div>
+                                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                                        <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-black uppercase tracking-wider">
+                                            Option A · No Treatment Plan Needed
+                                        </span>
+                                        <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                                            bookingMode === 'consultation' ? 'bg-primary-teal text-white' : 'border border-slate-300'
+                                        }`}>
+                                            {bookingMode === 'consultation' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                                        </div>
+                                    </div>
+                                    <h4 className="text-sm font-black text-dark-slate">General Dental Consultation</h4>
+                                    <p className="text-[11px] text-muted-text mt-1 leading-relaxed">
+                                        Book an examination, checkup, or initial diagnosis. Doctor will assess your teeth chairside and plan treatments with you during the visit.
+                                    </p>
+                                </div>
+                                <div className="mt-3 pt-2 border-t border-light-teal/60 flex items-center justify-between text-xs">
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Standard Examination</span>
+                                    <span className="font-mono font-black text-primary-teal text-sm">
+                                        {formatCurrency(doctorCurrency === 'PKR' ? 2500 : 85.00, doctorCurrency)}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* OPTION B: Select Specific Procedures */}
+                            <div 
+                                onClick={() => {
+                                    setBookingMode('procedures');
+                                    if (selectedProcedureKeys.length === 0 && activeProcedures.length > 0) {
+                                        setSelectedProcedureKeys([activeProcedures[0].procedureCode || activeProcedures[0].procedureName]);
+                                    }
+                                    setError('');
+                                }}
+                                className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between text-left relative ${
+                                    bookingMode === 'procedures'
+                                        ? 'border-primary-teal bg-light-teal/30 shadow-sm ring-2 ring-primary-teal/30 scale-[1.01]'
+                                        : 'border-light-teal/80 hover:border-primary-teal/40 bg-white hover:bg-warm-cream/40'
+                                }`}
+                            >
+                                <div>
+                                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                                        <span className="px-2 py-0.5 rounded-md bg-sky-50 border border-sky-200 text-sky-800 text-[10px] font-black uppercase tracking-wider">
+                                            Option B · Custom Treatment Plan
+                                        </span>
+                                        <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                                            bookingMode === 'procedures' ? 'bg-primary-teal text-white' : 'border border-slate-300'
+                                        }`}>
+                                            {bookingMode === 'procedures' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                                        </div>
+                                    </div>
+                                    <h4 className="text-sm font-black text-dark-slate">Select Specific Procedures</h4>
+                                    <p className="text-[11px] text-muted-text mt-1 leading-relaxed">
+                                        Choose from {activeProcedures.length} procedures (Cleaning, Fillings, RCT, Extractions, Whitening) with transparent live pricing.
+                                    </p>
+                                </div>
+                                <div className="mt-3 pt-2 border-t border-light-teal/60 flex items-center justify-between text-xs">
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                        {selectedProceduresList.length} Selected
+                                    </span>
+                                    <span className="font-mono font-black text-primary-teal text-sm">
+                                        {formatCurrency(totalConsultationFee, doctorCurrency)}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Consultation Mode Friendly Callout */}
+                        {bookingMode === 'consultation' && (
+                            <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200/80 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2 text-emerald-800 font-bold text-xs">
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                        <span>Standalone Consultation Selected (No Pre-Selected Procedures Required)</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowFeeScheduleModal(true)}
+                                        className="text-[11px] font-bold text-emerald-700 underline hover:text-emerald-900 cursor-pointer"
+                                    >
+                                        View procedure prices anyway →
+                                    </button>
+                                </div>
+                                <p className="text-xs text-slate-600 leading-relaxed">
+                                    Your booking will be confirmed for a comprehensive dental examination with <strong>{currentDoctor.name}</strong>. The attending clinician will review your oral health chairside and formulate an individualized treatment plan during your appointment.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Procedures Selection Mode (Search, Category Filters & Matrix) */}
+                        {bookingMode === 'procedures' && (
+                            <div className="space-y-3 pt-1">
+                                {/* Search & Category Filter Strip */}
+                                <div className="space-y-2">
+                            <div className="relative">
+                                <Search className="w-3.5 h-3.5 text-muted-text absolute left-3 top-1/2 -translate-y-1/2" />
+                                <input
+                                    type="text"
+                                    value={procedureSearch}
+                                    onChange={(e) => setProcedureSearch(e.target.value)}
+                                    placeholder="Search treatments or procedure code (e.g. Cleaning, Root Canal, Crown, 011)..."
+                                    className="w-full pl-8.5 pr-4 py-2 bg-warm-cream/50 border border-light-teal rounded-xl text-xs text-dark-slate focus:outline-none focus:ring-2 focus:ring-primary-teal/40 placeholder:text-muted-text/60"
+                                />
+                                {procedureSearch && (
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setProcedureSearch('')}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-text hover:text-dark-slate cursor-pointer"
+                                    >
+                                        ×
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Category Filter Pills */}
+                            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-[11px]">
+                                {categories.map((cat) => {
+                                    const isCatSelected = selectedCategory === cat;
+                                    return (
+                                        <button
+                                            key={cat}
+                                            type="button"
+                                            onClick={() => setSelectedCategory(cat)}
+                                            className={`px-2.5 py-1 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
+                                                isCatSelected
+                                                    ? 'bg-primary-teal text-white shadow-2xs'
+                                                    : 'bg-white hover:bg-light-teal text-dark-slate border border-light-teal/80'
+                                            }`}
+                                        >
+                                            {cat}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Selected Treatments Summary Tray (Multi-treatment indicator) */}
+                        {selectedProceduresList.length > 0 && (
+                            <div className="p-3 bg-teal-50/70 border border-teal-200 rounded-2xl space-y-2 animate-in fade-in">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-primary-teal animate-pulse" />
+                                        <span className="text-xs font-bold text-dark-slate">
+                                            Selected Treatments ({selectedProceduresList.length})
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-mono font-black text-primary-hover">
+                                            Total: {formatCurrency(totalConsultationFee, doctorCurrency)}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedProcedureKeys([])}
+                                            className="text-[10px] font-bold text-rose-500 hover:text-rose-700 cursor-pointer ml-1"
+                                        >
+                                            Clear All
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto scrollbar-thin">
+                                    {selectedProceduresList.map((proc) => {
+                                        const key = proc.procedureCode || proc.procedureName;
+                                        return (
+                                            <span
+                                                key={key}
+                                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-teal-200/80 rounded-xl text-[11px] font-bold text-dark-slate shadow-2xs"
+                                            >
+                                                {proc.procedureCode && (
+                                                    <span className="px-1 py-0.2 bg-teal-50 text-primary-teal font-mono text-[9px] rounded">
+                                                        {proc.procedureCode}
+                                                    </span>
+                                                )}
+                                                <span className="truncate max-w-[170px]">{proc.procedureName || proc.label}</span>
+                                                <span className="font-mono text-primary-teal font-bold">
+                                                    {formatCurrency(Number(proc.standardFee || proc.fee || 85), doctorCurrency)}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleProcedure(proc);
+                                                    }}
+                                                    className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer font-bold text-xs"
+                                                    title="Remove treatment"
+                                                >
+                                                    ×
+                                                </button>
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Procedures Grid (Scrollable container to maintain zero-page scroll) */}
+                        {loadingProcedures ? (
+                            <div className="p-8 text-center bg-warm-cream/30 rounded-2xl border border-light-teal/60 flex flex-col items-center justify-center gap-2">
+                                <RefreshCw className="w-5 h-5 text-primary-teal animate-spin" />
+                                <span className="text-xs text-muted-text font-medium">Loading {currentDoctor.name}'s treatment plans...</span>
+                            </div>
+                        ) : filteredProcedures.length === 0 ? (
+                            <div className="p-6 text-center bg-white rounded-2xl border border-light-teal text-muted-text text-xs">
+                                No procedures found matching "{procedureSearch}". Try clearing search or selecting "All".
+                            </div>
+                        ) : (
+                            <div className="max-h-[290px] overflow-y-auto pr-1 space-y-2 scrollbar-thin">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    {filteredProcedures.map((proc) => {
+                                        const pId = proc.procedureCode || proc.procedureName;
+                                        const isSelected = selectedProcedureKeys.includes(pId);
+                                        const fee = Number(proc.standardFee || proc.fee || 85.00);
+                                        const badgeClass = categoryBadgeColors[proc.category] || 'bg-slate-100 text-slate-700 border-slate-300';
+
+                                        return (
+                                            <div
+                                                key={pId}
+                                                onClick={() => toggleProcedure(proc)}
+                                                className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between text-left relative ${
+                                                    isSelected
+                                                        ? 'border-primary-teal bg-teal-50/50 shadow-xs ring-2 ring-primary-teal/30 scale-[1.008]'
+                                                        : 'border-light-teal/80 hover:border-primary-teal/40 bg-white hover:bg-warm-cream/40'
+                                                }`}
+                                            >
+                                                <div>
+                                                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            {proc.procedureCode && (
+                                                                <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-dark-slate font-mono text-[10px] font-bold">
+                                                                    {proc.procedureCode}
+                                                                </span>
+                                                            )}
+                                                            <span className={`px-2 py-0.5 rounded-md border text-[9px] font-bold ${badgeClass}`}>
+                                                                {proc.category || 'General'}
+                                                            </span>
+                                                        </div>
+                                                        <span className="text-xs font-mono font-black text-primary-hover whitespace-nowrap">
+                                                            {formatCurrency(fee, doctorCurrency)}
+                                                        </span>
+                                                    </div>
+
+                                                    <h4 className="text-xs font-bold text-dark-slate leading-snug">
+                                                        {proc.procedureName || proc.label}
+                                                    </h4>
+                                                    {proc.description && (
+                                                        <p className="text-[10px] text-muted-text line-clamp-1 mt-0.5 leading-relaxed">
+                                                            {proc.description}
+                                                        </p>
+                                                    )}
+                                                </div>
+
+                                                <div className="mt-2 pt-1.5 border-t border-light-teal/70 flex items-center justify-between text-[10px] text-muted-text font-medium">
+                                                    <span>Est. {proc.estimatedDuration || '45 mins'}</span>
+                                                    <div className="flex items-center gap-1">
+                                                        {isSelected ? (
+                                                            <span className="font-bold text-primary-teal flex items-center gap-1 bg-white px-2 py-0.5 rounded-md border border-primary-teal/30 shadow-2xs">
+                                                                <Check className="w-3 h-3 stroke-[3]" /> Added to Plan
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-400 hover:text-dark-slate flex items-center gap-0.5">
+                                                                + Add Treatment
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+            </div>
+        )}
+
+                {/* ------------------------------------------------------------- */}
+                {/* STEP 3: SCHEDULE DATE & TIME                                  */}
+                {/* ------------------------------------------------------------- */}
+                {currentStep === 3 && (
+                    <div className="space-y-4 animate-in fade-in">
+                        
+                        {/* Header with Slot Reassurance Banner */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-light-teal/80 pb-3">
+                            <div>
+                                <h3 className="text-base font-serif font-black text-dark-slate">
+                                    3. Select Date & Time
+                                </h3>
+                                <p className="text-xs text-muted-text">
+                                    Booking consultation with {currentDoctor.name}.
+                                </p>
+                            </div>
+                            {preferredDate && (
+                                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-light-teal border border-light-teal-hover text-xs font-bold text-primary-hover shadow-2xs">
+                                    <CalendarIcon className="w-3.5 h-3.5 text-primary-teal" />
+                                    <span>
+                                        {new Date(preferredDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · {preferredTime}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* 1. Interactive 7-Day Visual Strip */}
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-dark-slate uppercase tracking-wider">
+                                    1. Choose Appointment Day
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCustomCalendar(prev => !prev)}
+                                    className="text-[11px] font-bold text-primary-teal hover:text-primary-hover flex items-center gap-1 cursor-pointer transition-colors"
+                                >
+                                    <CalendarIcon className="w-3 h-3" />
+                                    <span>{showCustomCalendar ? 'Hide Calendar' : 'Choose Other Date...'}</span>
+                                </button>
+                            </div>
+
+                            {/* 7 Days Strip */}
+                            <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                                {upcomingDays.map((d) => {
+                                    const isSelected = preferredDate === d.iso;
+                                    return (
+                                        <button
+                                            key={d.iso}
+                                            type="button"
+                                            onClick={() => {
+                                                setPreferredDate(d.iso);
+                                                setError('');
+                                            }}
+                                            className={`p-2 sm:p-2.5 rounded-2xl border-2 transition-all cursor-pointer text-center flex flex-col items-center justify-between ${
+                                                isSelected
+                                                    ? 'border-primary-teal bg-primary-teal text-white shadow-md shadow-primary-teal/25 ring-2 ring-primary-teal/30 scale-[1.02]'
+                                                    : 'border-light-teal/80 bg-white hover:border-primary-teal/50 hover:bg-warm-cream/60 text-dark-slate'
+                                            }`}
+                                        >
+                                            <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                                                isSelected ? 'text-teal-100' : 'text-muted-text'
+                                            }`}>
+                                                {d.badge}
+                                            </span>
+                                            <span className="text-base sm:text-lg font-black leading-tight my-0.5 font-mono">
+                                                {d.dayNum}
+                                            </span>
+                                            <span className={`text-[10px] font-bold ${
+                                                isSelected ? 'text-teal-200' : 'text-muted-text'
+                                            }`}>
+                                                {d.monthName}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Optional Custom Date Picker */}
+                            {showCustomCalendar && (
+                                <div className="p-3 bg-warm-cream rounded-2xl border border-light-teal flex items-center gap-3 animate-in fade-in">
+                                    <span className="text-xs font-bold text-dark-slate whitespace-nowrap">Specific Date:</span>
+                                    <input
+                                        type="date"
+                                        min={minDateStr}
+                                        value={preferredDate}
+                                        onChange={(e) => {
+                                            setPreferredDate(e.target.value);
+                                            setError('');
+                                        }}
+                                        className="px-3 py-1.5 bg-white border border-light-teal rounded-xl text-xs font-bold text-dark-slate focus:outline-none focus:ring-2 focus:ring-primary-teal/40 cursor-pointer"
+                                    />
+                                </div>
+                            )}
+                        </div>
+
+                        {/* 2. Morning & Afternoon Time Slots */}
+                        <div className="space-y-2 pt-1">
+                            <span className="text-[11px] font-bold text-dark-slate uppercase tracking-wider block">
+                                2. Select Time Slot
+                            </span>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {/* Morning Slots */}
+                                <div className="p-3 bg-warm-cream/50 rounded-2xl border border-light-teal/80 space-y-2">
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-muted-text uppercase">
+                                        <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                        <span>Morning Slots (09:00 AM – 12:00 PM)</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {morningSlots.map((slot) => {
+                                            const isSelected = preferredTime === slot;
+                                            return (
+                                                <button
+                                                    key={slot}
+                                                    type="button"
+                                                    onClick={() => setPreferredTime(slot)}
+                                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                                                        isSelected
+                                                            ? 'bg-primary-teal text-white shadow-xs'
+                                                            : 'bg-white text-dark-slate hover:bg-light-teal border border-light-teal/80'
+                                                    }`}
+                                                >
+                                                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                                    <span>{slot}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* Afternoon Slots */}
+                                <div className="p-3 bg-warm-cream/50 rounded-2xl border border-light-teal/80 space-y-2">
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-muted-text uppercase">
+                                        <Clock className="w-3.5 h-3.5 text-primary-teal" />
+                                        <span>Afternoon Slots (02:00 PM – 05:00 PM)</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {afternoonSlots.map((slot) => {
+                                            const isSelected = preferredTime === slot;
+                                            return (
+                                                <button
+                                                    key={slot}
+                                                    type="button"
+                                                    onClick={() => setPreferredTime(slot)}
+                                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                                                        isSelected
+                                                            ? 'bg-primary-teal text-white shadow-xs'
+                                                            : 'bg-white text-dark-slate hover:bg-light-teal border border-light-teal/80'
+                                                    }`}
+                                                >
+                                                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                                    <span>{slot}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 3. Reason or Symptoms with One-Touch Tags */}
+                        <div className="space-y-2 pt-1">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <label className="block text-[11px] font-bold text-dark-slate uppercase tracking-wider">
+                                        3. Patient Consultation Notes / Special Requests (Optional)
+                                    </label>
+                                    <p className="text-[10px] text-muted-text">
+                                        These comments sync directly to your doctor's chairside chart and invoice records.
+                                    </p>
+                                </div>
+                                <div className="hidden sm:flex items-center gap-1">
+                                    {quickReasons.map((qr) => (
+                                        <button
+                                            key={qr}
+                                            type="button"
+                                            onClick={() => setReason(qr)}
+                                            className="px-2 py-0.5 rounded-md bg-warm-cream hover:bg-light-teal border border-light-teal text-[10px] font-semibold text-dark-slate cursor-pointer transition-colors"
+                                        >
+                                            + {qr}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <textarea
+                                rows={2}
+                                value={reason}
+                                onChange={(e) => setReason(e.target.value)}
+                                placeholder="e.g. Tooth sensitivity on lower left molar, slight gum tenderness, or questions about cosmetic whitening..."
+                                className="w-full px-3.5 py-2.5 bg-warm-cream/60 border border-light-teal rounded-xl text-xs text-dark-slate focus:outline-none focus:ring-2 focus:ring-primary-teal/40 placeholder:text-muted-text/60 leading-relaxed resize-none"
+                            />
+                        </div>
+
+                    </div>
+                )}
+
+                {/* ------------------------------------------------------------- */}
+                {/* STEP 4: CHOOSE PAYMENT METHOD & CONFIRM                       */}
+                {/* ------------------------------------------------------------- */}
+                {currentStep === 4 && (
+                    <div className="space-y-4 animate-in fade-in">
+                        
+                        {/* Summary Header */}
+                        <div className="p-3.5 bg-warm-cream rounded-2xl border border-light-teal flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2">
+                                <span className="font-bold text-dark-slate">{currentDoctor.name}</span>
+                                <span className="text-muted-text">({currentDoctor.title})</span>
+                            </div>
+                            <div className="flex items-center gap-2 font-mono">
+                                <span className="text-muted-text">{preferredDate} at {preferredTime}</span>
+                            </div>
+                        </div>
+
+                        {/* Itemized Treatment Plan Breakdown */}
+                        <div className="bg-white rounded-2xl border border-light-teal p-3.5 space-y-2.5">
+                            <div className="flex items-center justify-between border-b border-light-teal pb-2">
+                                <div className="flex items-center gap-1.5">
+                                    <Sparkles className="w-3.5 h-3.5 text-primary-teal" />
+                                    <span className="text-[11px] font-bold text-dark-slate uppercase tracking-wider">
+                                        Selected Treatments ({selectedProceduresList.length})
+                                    </span>
+                                </div>
+                                <span className="text-[11px] font-mono font-bold text-primary-teal">
+                                    {doctorCurrency} Fee Schedule
+                                </span>
+                            </div>
+                            <div className="space-y-2 max-h-36 overflow-y-auto pr-1 scrollbar-thin">
+                                {selectedProceduresList.map((proc, idx) => (
+                                    <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-dashed border-light-teal/60 last:border-0">
+                                        <div className="flex items-center gap-2">
+                                            {proc.procedureCode && (
+                                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-mono font-bold text-dark-slate">
+                                                    {proc.procedureCode}
+                                                </span>
+                                            )}
+                                            <span className="font-semibold text-dark-slate">{proc.procedureName || proc.label}</span>
+                                        </div>
+                                        <span className="font-mono font-bold text-dark-slate">
+                                            {formatCurrency(Number(proc.standardFee || proc.fee || 85), doctorCurrency)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="pt-2 border-t border-light-teal flex items-center justify-between text-xs font-black">
+                                <span className="text-dark-slate">Total Consultation Fee</span>
+                                <span className="text-base font-mono text-primary-hover">{formatCurrency(totalConsultationFee, doctorCurrency)}</span>
+                            </div>
+                        </div>
+
+                        {/* Dual Payment Radio Cards */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            
+                            {/* Option 1: Cash at Clinic */}
+                            <div
+                                onClick={() => setPaymentMethod('Cash')}
+                                className={`p-4 rounded-2xl border-2 transition-all cursor-pointer space-y-2 relative ${
+                                    paymentMethod === 'Cash' 
+                                        ? 'border-primary-teal bg-light-teal/50 shadow-xs ring-1 ring-primary-teal/40' 
+                                        : 'border-light-teal/80 hover:border-primary-teal/40 bg-white'
+                                }`}
+                            >
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2.5">
+                                        <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center">
+                                            <Banknote className="w-4 h-4" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-xs font-black text-dark-slate">Cash at Clinic Reception</h4>
+                                            <span className="text-[10px] text-amber-800 font-bold uppercase">Pay on Arrival</span>
+                                        </div>
+                                    </div>
+                                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                                        paymentMethod === 'Cash' ? 'border-primary-teal bg-primary-teal' : 'border-slate-300'
+                                    }`}>
+                                        {paymentMethod === 'Cash' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-muted-text leading-relaxed">
+                                    Instant Cash Voucher issued. Settle the fee in cash at clinic front desk upon arrival.
+                                </p>
+                            </div>
+
+                            {/* Option 2: Pay Online with Card */}
+                            <div
+                                onClick={() => setPaymentMethod('Online_Card')}
+                                className={`p-4 rounded-2xl border-2 transition-all cursor-pointer space-y-2 relative ${
+                                    paymentMethod === 'Online_Card' 
+                                        ? 'border-primary-teal bg-light-teal/50 shadow-xs ring-1 ring-primary-teal/40' 
+                                        : 'border-light-teal/80 hover:border-primary-teal/40 bg-white'
+                                }`}
+                            >
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2.5">
+                                        <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center">
+                                            <CreditCard className="w-4 h-4" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-xs font-black text-dark-slate">Pay Online via Card</h4>
+                                            <span className="text-[10px] text-emerald-700 font-bold uppercase">Visa, Master, PayPak</span>
+                                        </div>
+                                    </div>
+                                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                                        paymentMethod === 'Online_Card' ? 'border-primary-teal bg-primary-teal' : 'border-slate-300'
+                                    }`}>
+                                        {paymentMethod === 'Online_Card' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-muted-text leading-relaxed">
+                                    Instant settlement via Debit / Credit Card. Tax invoice & receipt issued immediately.
+                                </p>
+                            </div>
+
+                        </div>
+
+                        {/* Compact Card Form (Only if Card selected) */}
+                        {paymentMethod === 'Online_Card' && (
+                            <div className="p-3.5 bg-warm-cream rounded-2xl border border-light-teal space-y-3 animate-in fade-in">
+                                <div className="flex items-center justify-between text-[11px]">
+                                    <span className="font-bold text-dark-slate flex items-center gap-1.5">
+                                        <Lock className="w-3 h-3 text-emerald-600" />
+                                        Secure 256-Bit SSL Card Encryption
+                                    </span>
+                                    <span className="text-muted-text font-mono text-[10px]">Visa / MasterCard / PayPak</span>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                                    <div className="sm:col-span-5">
+                                        <input
+                                            type="text"
+                                            value={cardHolder}
+                                            onChange={(e) => setCardHolder(e.target.value)}
+                                            placeholder="Cardholder Full Name"
+                                            className="w-full px-3 py-2 bg-white border border-light-teal rounded-xl text-xs font-bold text-dark-slate focus:outline-none focus:ring-2 focus:ring-primary-teal/40"
+                                        />
+                                    </div>
+                                    <div className="sm:col-span-7">
+                                        <input
+                                            type="text"
+                                            maxLength="19"
+                                            value={cardNumber}
+                                            onChange={handleCardNumberChange}
+                                            placeholder="Card Number (16 Digits)"
+                                            className="w-full px-3 py-2 bg-white border border-light-teal rounded-xl text-xs font-mono font-bold text-dark-slate tracking-wider focus:outline-none focus:ring-2 focus:ring-primary-teal/40"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2.5 max-w-xs">
+                                    <input
+                                        type="text"
+                                        maxLength="5"
+                                        value={cardExpiry}
+                                        onChange={handleExpiryChange}
+                                        placeholder="MM/YY"
+                                        className="w-full px-3 py-2 bg-white border border-light-teal rounded-xl text-xs font-mono font-bold text-dark-slate text-center focus:outline-none focus:ring-2 focus:ring-primary-teal/40"
+                                    />
+                                    <input
+                                        type="password"
+                                        maxLength="4"
+                                        value={cardCvc}
+                                        onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                                        placeholder="CVC"
+                                        className="w-full px-3 py-2 bg-white border border-light-teal rounded-xl text-xs font-mono font-bold text-dark-slate text-center focus:outline-none focus:ring-2 focus:ring-primary-teal/40"
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                    </div>
+                )}
+
+                {/* ------------------------------------------------------------- */}
+                {/* BOTTOM NAVIGATION BUTTONS (STICKY WITHIN CARD)                */}
+                {/* ------------------------------------------------------------- */}
+                <div className="pt-4 border-t border-light-teal flex items-center justify-between">
+                    <div>
+                        {currentStep > 1 ? (
+                            <button
+                                type="button"
+                                onClick={handlePrev}
+                                className="px-4 py-2 bg-warm-cream hover:bg-light-teal text-dark-slate text-xs font-bold rounded-xl border border-light-teal transition-all cursor-pointer flex items-center gap-1.5"
+                            >
+                                <ArrowLeft className="w-3.5 h-3.5" />
+                                <span>Back</span>
+                            </button>
+                        ) : (
+                            <span className="text-[11px] text-muted-text font-medium">Dentia Clinic Workspace</span>
+                        )}
+                    </div>
+
+                    <div>
+                        {currentStep < 4 ? (
+                            <button
+                                type="button"
+                                onClick={handleNext}
+                                className="px-5 py-2.5 bg-primary-teal hover:bg-primary-hover text-white text-xs font-bold rounded-xl shadow-md shadow-primary-teal/20 transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                                <span>Continue</span>
+                                <ChevronRight className="w-4 h-4" />
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={handleConfirmBooking}
+                                disabled={loading}
+                                className="px-6 py-2.5 bg-primary-teal hover:bg-primary-hover disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-md shadow-primary-teal/25 transition-all flex items-center gap-2 cursor-pointer"
+                            >
+                                {loading ? (
+                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                ) : (
+                                    <>
+                                        <Sparkles className="w-4 h-4" />
+                                        <span>Confirm Booking ({formatCurrency(procedureFee, doctorCurrency)})</span>
+                                    </>
+                                )}
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+            </div>
+
+            {/* ========================================================= */}
+            {/* FULL DOCTOR FEE SCHEDULE MODAL                            */}
+            {/* ========================================================= */}
+            {showFeeScheduleModal && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-5">
+                    <div className="bg-white rounded-3xl p-5 sm:p-6 max-w-3xl w-full shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] flex flex-col justify-between animate-in zoom-in-95">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between border-b border-light-teal/60 pb-3.5">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-primary-teal/40 shrink-0 bg-slate-100">
+                                    <img 
+                                        src={currentDoctor.avatar} 
+                                        alt={currentDoctor.name} 
+                                        className="w-full h-full object-cover" 
+                                    />
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="text-base font-serif font-black text-dark-slate">
+                                            {currentDoctor.name} — Fee Schedule & Catalog
+                                        </h3>
+                                        <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 text-[10px] font-mono font-black border border-emerald-200">
+                                            {doctorCurrency}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-muted-text">
+                                        Browse all transparent clinical treatment pricing and estimated appointment durations.
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowFeeScheduleModal(false)}
+                                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-dark-slate flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        {/* Search & Category Filter */}
+                        <div className="space-y-2">
+                            <div className="relative">
+                                <Search className="w-3.5 h-3.5 text-muted-text absolute left-3 top-1/2 -translate-y-1/2" />
+                                <input
+                                    type="text"
+                                    value={modalSearchQuery}
+                                    onChange={(e) => setModalSearchQuery(e.target.value)}
+                                    placeholder="Search procedure by name, category, or code (e.g., Scaling, Extraction, 011)..."
+                                    className="w-full pl-8.5 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-dark-slate focus:outline-none focus:ring-2 focus:ring-primary-teal/40"
+                                />
+                                {modalSearchQuery && (
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setModalSearchQuery('')}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-text hover:text-dark-slate cursor-pointer"
+                                    >
+                                        ×
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-[11px]">
+                                {categories.map((cat) => (
+                                    <button
+                                        key={cat}
+                                        type="button"
+                                        onClick={() => setModalCategoryFilter(cat)}
+                                        className={`px-2.5 py-1 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
+                                            modalCategoryFilter === cat
+                                                ? 'bg-primary-teal text-white shadow-2xs'
+                                                : 'bg-slate-100 hover:bg-slate-200 text-dark-slate'
+                                        }`}
+                                    >
+                                        {cat}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Modal Procedures List */}
+                        <div className="flex-1 overflow-y-auto pr-1 space-y-2 max-h-[50vh] scrollbar-thin">
+                            {(() => {
+                                let list = activeProcedures;
+                                if (modalCategoryFilter !== 'All') {
+                                    list = list.filter(p => p.category === modalCategoryFilter);
+                                }
+                                if (modalSearchQuery.trim()) {
+                                    const q = modalSearchQuery.toLowerCase().trim();
+                                    list = list.filter(p => 
+                                        (p.procedureName && p.procedureName.toLowerCase().includes(q)) ||
+                                        (p.procedureCode && p.procedureCode.toLowerCase().includes(q)) ||
+                                        (p.category && p.category.toLowerCase().includes(q))
+                                    );
+                                }
+                                if (list.length === 0) {
+                                    return (
+                                        <div className="py-8 text-center text-xs text-muted-text italic">
+                                            No procedures found matching your query.
+                                        </div>
+                                    );
+                                }
+                                return (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {list.map((p) => {
+                                            const key = p.procedureCode || p.procedureName;
+                                            const isSelected = selectedProcedureKeys.includes(key);
+                                            const fee = Number(p.standardFee || p.fee || 85.00);
+                                            const badgeClass = categoryBadgeColors[p.category] || 'bg-slate-100 text-slate-700 border-slate-300';
+
+                                            return (
+                                                <div 
+                                                    key={key} 
+                                                    className="p-3 rounded-2xl border border-slate-200 bg-white hover:border-primary-teal/40 transition-all flex flex-col justify-between"
+                                                >
+                                                    <div>
+                                                        <div className="flex items-center justify-between gap-1 mb-1">
+                                                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${badgeClass} truncate max-w-[150px]`}>
+                                                                {p.category || 'General'}
+                                                            </span>
+                                                            <span className="text-[10px] text-muted-text font-mono">
+                                                                {p.estimatedDuration || '30 mins'}
+                                                            </span>
+                                                        </div>
+                                                        <h5 className="text-xs font-bold text-dark-slate">
+                                                            {p.procedureCode && <span className="font-mono text-primary-teal mr-1">[{p.procedureCode}]</span>}
+                                                            {p.procedureName || p.label}
+                                                        </h5>
+                                                        {p.description && (
+                                                            <p className="text-[10px] text-muted-text line-clamp-2 mt-1">
+                                                                {p.description}
+                                                            </p>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between">
+                                                        <span className="font-mono font-black text-xs text-primary-teal">
+                                                            {formatCurrency(fee, doctorCurrency)}
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setBookingMode('procedures');
+                                                                toggleProcedure(p);
+                                                            }}
+                                                            className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                                                isSelected 
+                                                                    ? 'bg-emerald-100 text-emerald-800' 
+                                                                    : 'bg-primary-teal hover:bg-primary-hover text-white'
+                                                            }`}
+                                                        >
+                                                            {isSelected ? (
+                                                                <>
+                                                                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                                                    <span>Added</span>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <Plus className="w-2.5 h-2.5" />
+                                                                    <span>Add to Plan</span>
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            })()}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                            <span className="text-muted-text font-medium">
+                                Showing {activeProcedures.length} standard dental services
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setShowFeeScheduleModal(false)}
+                                className="px-4 py-2 bg-primary-teal hover:bg-primary-hover text-white font-bold rounded-xl cursor-pointer shadow-xs transition-colors"
+                            >
+                                Done
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ============================================================= */}
+            {/* 🌟 DETAILED DOCTOR PROFILE & CREDENTIALS MODAL                */}
+            {/* ============================================================= */}
+            {previewDoctor && (
+                <div className="fixed inset-0 z-50 bg-dark-slate/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl max-w-2xl w-full border border-light-teal shadow-2xl overflow-hidden my-8 animate-in zoom-in-95 duration-200">
+                        {/* Modal Header */}
+                        <div className="relative bg-gradient-to-r from-dark-slate via-[#193256] to-primary-teal text-white p-6 sm:p-7">
+                            <button
+                                type="button"
+                                onClick={() => setPreviewDoctor(null)}
+                                className="absolute top-5 right-5 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+
+                            <div className="flex items-start gap-4 sm:gap-5">
+                                <img
+                                    src={previewDoctor.avatar}
+                                    alt={previewDoctor.name}
+                                    className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover border-2 border-white shadow-lg shrink-0"
+                                    onError={(e) => {
+                                        e.target.onerror = null;
+                                        e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(previewDoctor.name)}&background=008080&color=fff&bold=true`;
+                                    }}
+                                />
+                                <div className="space-y-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <h2 className="text-xl sm:text-2xl font-serif font-bold text-white truncate">
+                                            {previewDoctor.name}
+                                        </h2>
+                                        <BadgeCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+                                    </div>
+                                    <p className="text-xs sm:text-sm font-semibold text-light-teal truncate">
+                                        {previewDoctor.title}
+                                    </p>
+                                    <p className="text-xs text-white/80 flex items-center gap-1">
+                                        <Award className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                                        <span>{previewDoctor.specialization || 'General & Restorative Dentistry'}</span>
+                                    </p>
+                                    <div className="flex items-center gap-3 pt-1 text-xs">
+                                        <span className="font-bold bg-white/20 px-2.5 py-0.5 rounded-full">
+                                            {previewDoctor.yearsOfExperience || 8} Years Experience
+                                        </span>
+                                        <span className="flex items-center gap-1 font-bold text-amber-300">
+                                            <Star className="w-3.5 h-3.5 fill-amber-300 text-amber-300" />
+                                            {previewDoctor.rating || 4.9} ({previewDoctor.reviewCount || 28} Reviews)
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-6 sm:p-7 space-y-5 max-h-[60vh] overflow-y-auto">
+                            {/* Clinical Biography */}
+                            <div className="space-y-1.5">
+                                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-text flex items-center gap-1.5">
+                                    <Sparkles className="w-4 h-4 text-primary-teal" />
+                                    <span>Professional Biography & Philosophy</span>
+                                </h4>
+                                <p className="text-xs sm:text-sm text-dark-slate leading-relaxed font-normal bg-warm-cream/50 p-4 rounded-2xl border border-light-teal/30">
+                                    {previewDoctor.biography || `${previewDoctor.name} is an experienced dental clinician dedicated to providing compassionate, evidence-based dental care, modern cosmetic dentistry, and comprehensive patient treatment.`}
+                                </p>
+                            </div>
+
+                            {/* Primary Hospital / Clinic Affiliation */}
+                            {previewDoctor.organizationName && (
+                                <div className="space-y-1.5">
+                                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-text flex items-center gap-1.5">
+                                        <Building2 className="w-4 h-4 text-primary-teal" />
+                                        <span>Hospital / Medical Organization</span>
+                                    </h4>
+                                    <div className="bg-gradient-to-r from-teal-50 to-indigo-50/50 rounded-2xl p-3.5 border border-teal-200/80 flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-white border border-teal-200 flex items-center justify-center shrink-0 shadow-xs">
+                                            {previewDoctor.organizationLogoUrl ? (
+                                                <img src={previewDoctor.organizationLogoUrl} alt={previewDoctor.organizationName} className="w-6 h-6 object-contain" />
+                                            ) : (
+                                                <Building2 className="w-5 h-5 text-primary-teal" />
+                                            )}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <h5 className="font-bold text-sm text-dark-slate truncate">{previewDoctor.organizationName}</h5>
+                                            <p className="text-xs text-muted-text font-medium truncate">
+                                                {previewDoctor.hospitalDepartment ? `${previewDoctor.hospitalDepartment} · ` : ''}{previewDoctor.organizationCity || 'Primary Base'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Work History / Hospital Credentials */}
+                            {(() => {
+                                const orgs = parseDoctorOrgs(previewDoctor.organizationWorkHistory);
+                                if (orgs.length === 0) return null;
+                                return (
+                                    <div className="space-y-2">
+                                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-text flex items-center gap-1.5">
+                                            <Building2 className="w-4 h-4 text-primary-teal" />
+                                            <span>Hospital & Institutional History</span>
+                                        </h4>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            {orgs.map((o, idx) => (
+                                                <div key={idx} className="bg-warm-cream/40 rounded-xl p-3 border border-light-teal/30 text-xs">
+                                                    <div className="flex items-center justify-between gap-1">
+                                                        <span className="font-bold text-dark-slate truncate">{o.organization}</span>
+                                                        <span className="text-[10px] font-semibold text-muted-text shrink-0">{o.period}</span>
+                                                    </div>
+                                                    {o.role && (
+                                                        <div className="text-[11px] text-primary-teal font-medium truncate mt-0.5">
+                                                            {o.role}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* Education */}
+                            {previewDoctor.education && (
+                                <div className="space-y-1.5">
+                                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-text flex items-center gap-1.5">
+                                        <GraduationCap className="w-4 h-4 text-primary-teal" />
+                                        <span>Education & Degrees</span>
+                                    </h4>
+                                    <div className="bg-warm-cream/40 p-3.5 rounded-2xl border border-light-teal/30 text-xs text-dark-slate leading-relaxed whitespace-pre-line font-medium">
+                                        {previewDoctor.education}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Certifications */}
+                            {previewDoctor.certifications && (
+                                <div className="space-y-1.5">
+                                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-text flex items-center gap-1.5">
+                                        <Award className="w-4 h-4 text-primary-teal" />
+                                        <span>Certifications & Fellowships</span>
+                                    </h4>
+                                    <div className="flex flex-wrap gap-2">
+                                        {previewDoctor.certifications.split(',').map((c, i) => (
+                                            <span key={i} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-light-teal/30 border border-light-teal/60 text-xs font-bold text-dark-slate">
+                                                <CheckCircle2 className="w-3.5 h-3.5 text-primary-teal shrink-0" />
+                                                <span>{c.trim()}</span>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Languages & Consultation Fee */}
+                            <div className="grid grid-cols-2 gap-4 bg-light-teal/15 p-4 rounded-2xl border border-light-teal/40 text-xs">
+                                <div>
+                                    <span className="text-muted-text font-bold uppercase tracking-wider block text-[10px]">Languages</span>
+                                    <span className="font-semibold text-dark-slate mt-0.5 block">{previewDoctor.languages || 'English, Urdu'}</span>
+                                </div>
+                                <div>
+                                    <span className="text-muted-text font-bold uppercase tracking-wider block text-[10px]">Consultation Fee</span>
+                                    <span className="font-serif font-bold text-dark-slate text-sm mt-0.5 block">
+                                        ${previewDoctor.consultationFee || 150}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Modal Footer CTA */}
+                        <div className="p-5 sm:p-6 bg-warm-cream/60 border-t border-light-teal/40 flex items-center justify-between gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setPreviewDoctor(null)}
+                                className="px-5 py-2.5 rounded-xl bg-white border border-light-teal text-muted-text text-xs font-bold hover:bg-light-teal/30 transition-colors cursor-pointer"
+                            >
+                                Close
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSelectedDoctorId(previewDoctor.id);
+                                    setPreviewDoctor(null);
+                                    setError('');
+                                }}
+                                className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-primary-teal to-primary-hover text-white text-xs font-bold shadow-md shadow-primary-teal/20 hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                            >
+                                <Check className="w-4 h-4 stroke-[3]" />
+                                <span>Select {previewDoctor.name} & Continue</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+        </div>
+    );
+}

@@ -6,9 +6,11 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using DentistAPI.Repositories;
 using DentistAPI.Models;
+using DentistAPI.Services;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -21,16 +23,22 @@ namespace DentistAPI.Controllers
         private readonly DentalRepository _repository;
         private readonly IConfiguration _config;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IFileUploadSecurityService _fileUploadService;
         private readonly string _apiKey;
         private readonly string _geminiEndpoint;
 
-        public PatientsController(DentalRepository repository, IConfiguration config, IHttpClientFactory httpClientFactory)
+        public PatientsController(
+            DentalRepository repository, 
+            IConfiguration config, 
+            IHttpClientFactory httpClientFactory,
+            IFileUploadSecurityService fileUploadService)
         {
             _repository = repository;
             _config = config;
             _httpClientFactory = httpClientFactory;
-            _apiKey = config["GEMINI_API_KEY"] ?? "";
-            var modelName = config["GEMINI_MODEL"] ?? "gemini-3.5-flash";
+            _fileUploadService = fileUploadService;
+            _apiKey = config["GEMINI_API_KEY"] ?? string.Empty;
+            var modelName = !string.IsNullOrEmpty(config["GEMINI_MODEL"]) ? config["GEMINI_MODEL"]! : "gemini-flash-latest";
             _geminiEndpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent";
         }
 
@@ -299,11 +307,23 @@ Rules:
             var content = new StringContent(JsonSerializer.Serialize(requestPayload), Encoding.UTF8, "application/json");
 
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(2500));
+            var startTime = DateTime.Now;
             var res = await client.PostAsync(url, content, cts.Token);
+            var endTime = DateTime.Now;
             if (!res.IsSuccessStatusCode)
             {
                 var err = await res.Content.ReadAsStringAsync();
                 Console.WriteLine($"Gemini API notice in intake: {res.StatusCode} - {err}");
+                GeminiCallLogger.LogCall(
+                    callType: "AI PATIENT INTAKE EXTRACTION",
+                    endpoint: url,
+                    requestPayload: $"[Doctor Spoken Intake: \"{prompt}\"]\nPayload:\n{JsonSerializer.Serialize(requestPayload)}",
+                    responseData: err,
+                    startTime: startTime,
+                    endTime: endTime,
+                    isSuccess: false,
+                    errorMessage: $"HTTP {res.StatusCode}: {err}"
+                );
                 return null;
             }
 
@@ -337,6 +357,18 @@ Rules:
                 AllowTrailingCommas = true
             };
             var parsed = JsonSerializer.Deserialize<AIIntakeResponse>(rawText, options);
+
+            GeminiCallLogger.LogCall(
+                callType: "AI PATIENT INTAKE EXTRACTION",
+                endpoint: url,
+                requestPayload: $"[Doctor Spoken Intake: \"{prompt}\"]\nPayload:\n{JsonSerializer.Serialize(requestPayload)}",
+                responseData: jsonRes,
+                startTime: startTime,
+                endTime: endTime,
+                isSuccess: true,
+                extractedResult: $"Parsed Patient: {parsed?.FirstName} {parsed?.LastName}, DOB: {parsed?.Dob}, Phone: {parsed?.Phone}, NHI: {parsed?.NhiNumber}\nRaw AI Output:\n{rawText}"
+            );
+
             return parsed;
         }
 
@@ -640,18 +672,50 @@ Rules:
                     }
                 }
 
+                // Preserve actual diagnosis/condition and prevent generic status overwrite
+                string resolvedStatus = update.ConditionStatus ?? update.Status ?? "Healthy";
+                if (resolvedStatus == "Completed" || resolvedStatus == "Planned" || resolvedStatus == "In Progress")
+                {
+                    if (!string.IsNullOrEmpty(update.Comment))
+                    {
+                        var firstPart = update.Comment.Split(new[] { '.', '•', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim();
+                        if (!string.IsNullOrEmpty(firstPart) && firstPart.Length > 3 && !firstPart.StartsWith("Status:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            resolvedStatus = firstPart;
+                        }
+                    }
+                }
+
+                string resolvedComment = update.Comment ?? update.Comments ?? "Updated via Chart / Treatment Plan";
+                if (!string.IsNullOrEmpty(update.Status) && !resolvedComment.Contains($"Status: {update.Status}"))
+                {
+                    resolvedComment += $" • Status: {update.Status}";
+                }
+                if (!string.IsNullOrEmpty(update.CdtCode) && !resolvedComment.Contains(update.CdtCode))
+                {
+                    resolvedComment += $" (CDT: {update.CdtCode})";
+                }
+
                 await _repository.UpdateTeethStateBulkAsync(
                     request.PatientId, 
                     tNumber, 
                     update.Color ?? "#10B981", 
-                    update.Status ?? "Healthy", 
-                    update.Status ?? "Healthy", // using status as treatment performed
-                    update.Comment ?? "Updated via Chart / Voice Command",
+                    resolvedStatus, 
+                    resolvedStatus, // using status as treatment performed
+                    resolvedComment,
                     dentitionCat,
                     toothKey,
                     update.DoctorId
                 );
             }
+
+            int primaryDocId = request.Updates?.FirstOrDefault()?.DoctorId ?? 1;
+            GeminiCallLogger.LogSync(
+                "TEETH ODONTOGRAM BULK SYNC",
+                request.PatientId,
+                primaryDocId,
+                $"Successfully synchronized {request.Updates?.Count ?? 0} teeth observations to SQL database."
+            );
             
             return Ok(new { message = "Bulk update successful." });
         }
@@ -692,6 +756,7 @@ Rules:
         {
             if (req == null) return BadRequest();
             await _repository.AddChatHistoryAsync(id, req.Transcript, req.ParsedAction);
+            GeminiCallLogger.LogSync("CHAT HISTORY SYNC", id, 1, $"Transcript: {req.Transcript} | Action: {req.ParsedAction}");
             return Ok();
         }
 
@@ -705,9 +770,25 @@ Rules:
         [HttpPost("{id}/clinical-logs")]
         public async Task<IActionResult> AddClinicalLog(int id, [FromBody] ClinicalLogRequest req)
         {
-            if (req == null || string.IsNullOrEmpty(req.Message)) return BadRequest("Message is required.");
+            int docId = (req != null && req.DoctorId.HasValue && req.DoctorId.Value > 0) ? req.DoctorId.Value : 2;
+            string msg = !string.IsNullOrEmpty(req?.Message) ? req.Message : "Clinical note recorded";
+            string effectiveLogType = !string.IsNullOrEmpty(req?.LogType) ? req.LogType : (!string.IsNullOrEmpty(req?.Action) ? req.Action : "Diagnostic Suite");
             
-            await _repository.AddClinicalLogAsync(id, req.DoctorID, req.Message, req.LogType);
+            try
+            {
+                await _repository.AddClinicalLogAsync(id, docId, msg, effectiveLogType);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error inserting clinical log: {ex.Message}");
+            }
+
+            try
+            {
+                GeminiCallLogger.LogSync("CLINICAL LOG SYNC", id, docId, $"[LogType: {effectiveLogType}] {msg}");
+            }
+            catch {}
+
             return Ok(new { message = "Clinical log added successfully." });
         }
 
@@ -716,6 +797,39 @@ Rules:
         {
             var logs = await _repository.GetClinicalLogsAsync(id);
             return Ok(logs);
+        }
+
+        [HttpGet("{id}/diagnostic-assessment")]
+        public async Task<IActionResult> GetDiagnosticAssessment(int id)
+        {
+            var record = await _repository.GetDiagnosticAssessmentAsync(id);
+            if (record == null) return Ok(null);
+            return Ok(record);
+        }
+
+        [HttpPost("{id}/diagnostic-assessment")]
+        public async Task<IActionResult> SaveDiagnosticAssessment(int id, [FromBody] DiagnosticAssessmentDto dto)
+        {
+            int docId = (dto != null && dto.DoctorId.HasValue && dto.DoctorId.Value > 0) ? dto.DoctorId.Value : 2;
+            string category = dto?.SuiteCategory ?? "occlusion";
+            string json = dto?.AssessmentJson ?? "{}";
+            
+            try
+            {
+                await _repository.SaveDiagnosticAssessmentAsync(id, docId, category, json, dto?.CdtCode, dto?.DiagnosisSummary);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SaveDiagnosticAssessment error: {ex.Message}");
+            }
+
+            try
+            {
+                GeminiCallLogger.LogSync("DIAGNOSTIC ASSESSMENT SYNC", id, docId, $"Saved {category} diagnosis: {dto?.DiagnosisSummary}");
+            }
+            catch {}
+
+            return Ok(new { message = "Diagnostic assessment saved successfully." });
         }
 
         [HttpPut("{id}")]
@@ -741,34 +855,22 @@ Rules:
         }
 
         [HttpPost("{id}/profile-image")]
-        public async Task<IActionResult> UploadProfileImage(int id, [FromForm] IFormFile file)
+        [Consumes("multipart/form-data")]
+        [EnableRateLimiting("upload-policy")]
+        public async Task<IActionResult> UploadProfileImage(int id, IFormFile file)
         {
-            if (file == null || file.Length == 0)
+            var validation = await _fileUploadService.ValidateAndExtractAsync(file, FileUploadCategory.ProfileImage);
+            if (!validation.IsValid)
             {
-                return BadRequest("No image file was provided.");
-            }
-
-            if (file.Length > 5 * 1024 * 1024)
-            {
-                return BadRequest("File size exceeds the 5MB maximum limit.");
-            }
-
-            var allowedTypes = new[] { "image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml" };
-            if (!allowedTypes.Contains(file.ContentType.ToLower()))
-            {
-                return BadRequest("Invalid image format. Allowed formats: JPEG, PNG, WebP, GIF, SVG.");
+                return BadRequest(new { message = validation.ErrorMessage });
             }
 
             var existing = await _repository.GetPatientByIdAsync(id);
-            if (existing == null) return NotFound("Patient not found.");
+            if (existing == null) return NotFound(new { message = "Patient not found." });
 
-            using var ms = new MemoryStream();
-            await file.CopyToAsync(ms);
-            byte[] imageBytes = ms.ToArray();
+            await _repository.UpdatePatientProfileImageAsync(id, validation.FileBytes, validation.CanonicalMimeType);
 
-            await _repository.UpdatePatientProfileImageAsync(id, imageBytes, file.ContentType);
-
-            string dataUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(imageBytes)}";
+            string dataUrl = $"data:{validation.CanonicalMimeType};base64,{Convert.ToBase64String(validation.FileBytes)}";
             return Ok(new
             {
                 message = "Profile image updated successfully.",
@@ -781,7 +883,9 @@ Rules:
         public async Task<IActionResult> GetProfileImage(int id)
         {
             var patient = await _repository.GetPatientByIdAsync(id);
-            if (patient == null) return NotFound("Patient not found.");
+            if (patient == null) return NotFound(new { message = "Patient not found." });
+
+            Response.Headers.Append("X-Content-Type-Options", "nosniff");
 
             if (patient.ProfileImage != null && patient.ProfileImage.Length > 0)
             {
@@ -871,6 +975,222 @@ Rules:
   <path d=""M20 106 C 24 82, 42 74, 60 74 C 78 74, 96 82, 100 106 Z"" fill=""#F0FDFA"" />
   <circle cx=""60"" cy=""48"" r=""20"" fill=""#CCFBF1"" />
 </svg>";
+
+        // ==========================================
+        // CLINICAL SPECIALTIES: IMPLANT PLANNING APIS
+        // ==========================================
+        [HttpGet("{id}/implant-plans")]
+        public async Task<IActionResult> GetImplantPlans(int id)
+        {
+            var plans = await _repository.GetImplantPlansByPatientAsync(id);
+            return Ok(plans);
+        }
+
+        [HttpPost("{id}/implant-plans")]
+        public async Task<IActionResult> SaveImplantPlan(int id, [FromBody] ImplantPlanDto dto)
+        {
+            if (dto == null) return BadRequest("Plan payload is required.");
+
+            // Validation: Numeric ranges
+            if (dto.ImplantLength < 3.0m || dto.ImplantLength > 25.0m)
+            {
+                return BadRequest("Implant length must be between 3.0 mm and 25.0 mm (clinical standard: 6.0 mm - 18.0 mm).");
+            }
+
+            if (dto.ImplantDiameter < 2.0m || dto.ImplantDiameter > 10.0m)
+            {
+                return BadRequest("Implant diameter must be between 2.0 mm and 10.0 mm (clinical standard: 2.5 mm - 7.0 mm).");
+            }
+
+            // Validation: Bone Quality (Lekholm & Zarb classification: D1, D2, D3, D4)
+            var validBoneQualities = new[] { "D1", "D2", "D3", "D4" };
+            if (string.IsNullOrWhiteSpace(dto.BoneQuality) || !validBoneQualities.Contains(dto.BoneQuality.Trim().ToUpper()))
+            {
+                return BadRequest("Bone quality must be a valid Lekholm & Zarb classification: D1, D2, D3, or D4.");
+            }
+
+            if (dto.BoneHeightAvailable.HasValue && (dto.BoneHeightAvailable.Value < 0 || dto.BoneHeightAvailable.Value > 40.0m))
+            {
+                return BadRequest("Bone height available must be between 0.0 mm and 40.0 mm.");
+            }
+
+            if (dto.BoneWidthAvailable.HasValue && (dto.BoneWidthAvailable.Value < 0 || dto.BoneWidthAvailable.Value > 30.0m))
+            {
+                return BadRequest("Bone width available must be between 0.0 mm and 30.0 mm.");
+            }
+
+            var record = new ImplantPlanRecord
+            {
+                ImplantPlanID = dto.ImplantPlanID ?? 0,
+                PatientID = id,
+                DoctorID = dto.DoctorID,
+                ToothNumber = dto.ToothNumber,
+                ToothKey = dto.ToothKey ?? dto.ToothNumber.ToString(),
+                ImplantBrand = dto.ImplantBrand?.Trim(),
+                ImplantLength = dto.ImplantLength,
+                ImplantDiameter = dto.ImplantDiameter,
+                BoneQuality = dto.BoneQuality.Trim().ToUpper(),
+                BoneHeightAvailable = dto.BoneHeightAvailable,
+                BoneWidthAvailable = dto.BoneWidthAvailable,
+                GraftingRequired = dto.GraftingRequired,
+                SinusLiftStatus = string.IsNullOrWhiteSpace(dto.SinusLiftStatus) ? "None" : dto.SinusLiftStatus.Trim(),
+                CbctReferenceUrl = dto.CbctReferenceUrl?.Trim(),
+                DigitalPlanningNotes = dto.DigitalPlanningNotes?.Trim(),
+                GuidedSurgeryFlag = dto.GuidedSurgeryFlag,
+                PlanStatus = string.IsNullOrWhiteSpace(dto.PlanStatus) ? "Planned" : dto.PlanStatus.Trim(),
+                PlannedDate = dto.PlannedDate,
+                PlacementDate = dto.PlacementDate
+            };
+
+            int planId = await _repository.SaveImplantPlanAsync(record);
+            record.ImplantPlanID = planId;
+
+            return Ok(new { message = "Implant plan saved successfully.", implantPlanId = planId, plan = record });
+        }
+
+        [HttpDelete("{id}/implant-plans/{planId}")]
+        public async Task<IActionResult> DeleteImplantPlan(int id, int planId)
+        {
+            var plan = await _repository.GetImplantPlanByIdAsync(planId);
+            if (plan == null || plan.PatientID != id) return NotFound("Implant plan not found.");
+
+            await _repository.DeleteImplantPlanAsync(planId);
+            return Ok(new { message = "Implant plan deleted successfully." });
+        }
+
+        // ==========================================
+        // CLINICAL SPECIALTIES: BIOPSY & PATHOLOGY APIS
+        // ==========================================
+        [HttpGet("{id}/biopsy-records")]
+        public async Task<IActionResult> GetBiopsyRecords(int id)
+        {
+            var records = await _repository.GetBiopsyRecordsByPatientAsync(id);
+            return Ok(records);
+        }
+
+        [HttpPost("{id}/biopsy-records")]
+        public async Task<IActionResult> SaveBiopsyRecord(int id, [FromBody] BiopsyDto dto)
+        {
+            if (dto == null) return BadRequest("Biopsy payload is required.");
+
+            // Validation: Biopsy Type single-select enum (Incisional / Excisional)
+            var validTypes = new[] { "Incisional", "Excisional" };
+            if (string.IsNullOrWhiteSpace(dto.BiopsyType) || !validTypes.Contains(dto.BiopsyType.Trim(), StringComparer.OrdinalIgnoreCase))
+            {
+                return BadRequest("Biopsy type must be either 'Incisional' or 'Excisional'.");
+            }
+
+            // Validation: Anatomical site of biopsy
+            if (string.IsNullOrWhiteSpace(dto.SiteOfBiopsy))
+            {
+                return BadRequest("Site of biopsy (anatomical location — tooth number, quadrant, or soft tissue region) is required.");
+            }
+
+            var record = new BiopsyRecord
+            {
+                BiopsyID = dto.BiopsyID ?? 0,
+                PatientID = id,
+                DoctorID = dto.DoctorID,
+                BiopsyType = char.ToUpper(dto.BiopsyType.Trim()[0]) + dto.BiopsyType.Trim().Substring(1).ToLower(), // Normalize: Incisional / Excisional
+                SiteOfBiopsy = dto.SiteOfBiopsy.Trim(),
+                ToothNumber = dto.ToothNumber,
+                ToothKey = dto.ToothKey,
+                ClinicalImpression = dto.ClinicalImpression?.Trim(),
+                PathologyLabName = dto.PathologyLabName?.Trim(),
+                SpecimenReference = dto.SpecimenReference?.Trim(),
+                BiopsyDate = dto.BiopsyDate ?? DateTime.UtcNow.Date,
+                Status = string.IsNullOrWhiteSpace(dto.Status) ? "Specimen Sent" : dto.Status.Trim(),
+                HistopathologyDiagnosis = dto.HistopathologyDiagnosis?.Trim(),
+                ResultsNotes = dto.ResultsNotes?.Trim(),
+                FollowUpRequired = dto.FollowUpRequired,
+                FollowUpDate = dto.FollowUpDate
+            };
+
+            int biopsyId = await _repository.SaveBiopsyRecordAsync(record);
+            record.BiopsyID = biopsyId;
+
+            return Ok(new { message = "Biopsy record saved successfully.", biopsyId = biopsyId, biopsy = record });
+        }
+
+        [HttpDelete("{id}/biopsy-records/{biopsyId}")]
+        public async Task<IActionResult> DeleteBiopsyRecord(int id, int biopsyId)
+        {
+            var biopsy = await _repository.GetBiopsyRecordByIdAsync(biopsyId);
+            if (biopsy == null || biopsy.PatientID != id) return NotFound("Biopsy record not found.");
+
+            await _repository.DeleteBiopsyRecordAsync(biopsyId);
+            return Ok(new { message = "Biopsy record deleted successfully." });
+        }
+
+        // ==========================================
+        // CLINICAL SPECIALTIES: ORTHODONTICS - CLEAR ALIGNERS APIS
+        // ==========================================
+        [HttpGet("{id}/ortho-aligners")]
+        public async Task<IActionResult> GetOrthoAligners(int id)
+        {
+            var aligners = await _repository.GetOrthoAlignersByPatientAsync(id);
+            return Ok(aligners);
+        }
+
+        [HttpPost("{id}/ortho-aligners")]
+        public async Task<IActionResult> SaveOrthoAligner(int id, [FromBody] OrthoAlignerTreatmentDto dto)
+        {
+            if (dto == null) return BadRequest("Ortho aligner payload is required.");
+
+            // Validation: Brand
+            if (string.IsNullOrWhiteSpace(dto.AlignerBrand))
+            {
+                return BadRequest("Aligner system / brand is required.");
+            }
+
+            // Validation: Stages
+            if (dto.TotalStages < 1 || dto.TotalStages > 200)
+            {
+                return BadRequest("Total number of aligner stages must be between 1 and 200.");
+            }
+
+            if (dto.CurrentStage < 0 || dto.CurrentStage > dto.TotalStages + 10)
+            {
+                return BadRequest($"Current stage must be between 0 and {dto.TotalStages}.");
+            }
+
+            var record = new OrthoAlignerTreatmentRecord
+            {
+                OrthoAlignerID = dto.OrthoAlignerID ?? 0,
+                PatientID = id,
+                DoctorID = dto.DoctorID,
+                AlignerBrand = dto.AlignerBrand.Trim(),
+                TotalStages = dto.TotalStages,
+                CurrentStage = dto.CurrentStage,
+                AttachmentsRequired = dto.AttachmentsRequired,
+                AttachmentNotes = dto.AttachmentNotes?.Trim(),
+                IprRequired = dto.IprRequired,
+                IprDetails = dto.IprDetails?.Trim(),
+                WearSchedule = string.IsNullOrWhiteSpace(dto.WearSchedule) ? "7 Days/Tray" : dto.WearSchedule.Trim(),
+                RefinementScanTracking = dto.RefinementScanTracking?.Trim(),
+                RefinementCount = dto.RefinementCount,
+                Arch = string.IsNullOrWhiteSpace(dto.Arch) ? "Dual" : dto.Arch.Trim(),
+                Status = string.IsNullOrWhiteSpace(dto.Status) ? "Active" : dto.Status.Trim(),
+                StartDate = dto.StartDate,
+                TargetCompletionDate = dto.TargetCompletionDate,
+                ClinicalNotes = dto.ClinicalNotes?.Trim()
+            };
+
+            int alignerId = await _repository.SaveOrthoAlignerAsync(record);
+            record.OrthoAlignerID = alignerId;
+
+            return Ok(new { message = "Ortho aligner treatment plan saved successfully.", alignerId = alignerId, treatment = record });
+        }
+
+        [HttpDelete("{id}/ortho-aligners/{alignerId}")]
+        public async Task<IActionResult> DeleteOrthoAligner(int id, int alignerId)
+        {
+            var aligner = await _repository.GetOrthoAlignerByIdAsync(alignerId);
+            if (aligner == null || aligner.PatientID != id) return NotFound("Ortho aligner treatment record not found.");
+
+            await _repository.DeleteOrthoAlignerAsync(alignerId);
+            return Ok(new { message = "Ortho aligner record deleted successfully." });
+        }
     }
 
     public class TreatmentPlanRequest
@@ -933,8 +1253,11 @@ Rules:
         public string? DentitionCategory { get; set; }
         public int? DoctorId { get; set; }
         public string? Status { get; set; }
+        public string? ConditionStatus { get; set; }
         public string? Color { get; set; }
         public string? Comment { get; set; }
+        public string? Comments { get; set; }
+        public string? CdtCode { get; set; }
     }
 
     public class PrescriptionRequest

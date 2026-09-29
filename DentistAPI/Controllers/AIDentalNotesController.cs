@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using DentistAPI.Models;
 using DentistAPI.Repositories;
@@ -13,6 +14,7 @@ namespace DentistAPI.Controllers
 {
     [ApiController]
     [Route("api/ai-dental-notes")]
+    [EnableRateLimiting("ai-policy")]
     public class AIDentalNotesController : ControllerBase
     {
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> _processingAudios = new();
@@ -20,6 +22,7 @@ namespace DentistAPI.Controllers
         private readonly ISpeechToTextService _sttService;
         private readonly IGeminiDentalNotesService _geminiService;
         private readonly DentalRepository _dentalRepository;
+        private readonly IFileUploadSecurityService _fileUploadService;
         private readonly ILogger<AIDentalNotesController> _logger;
 
         public AIDentalNotesController(
@@ -27,18 +30,21 @@ namespace DentistAPI.Controllers
             ISpeechToTextService sttService,
             IGeminiDentalNotesService geminiService,
             DentalRepository dentalRepository,
+            IFileUploadSecurityService fileUploadService,
             ILogger<AIDentalNotesController> logger)
         {
             _repository = repository;
             _sttService = sttService;
             _geminiService = geminiService;
             _dentalRepository = dentalRepository;
+            _fileUploadService = fileUploadService;
             _logger = logger;
         }
 
         [HttpPost("recordings")]
+        [Consumes("multipart/form-data")]
         public async Task<IActionResult> ProcessRecording(
-            [FromForm] IFormFile? audio, 
+            IFormFile? audio, 
             [FromForm] long patientId, 
             [FromForm] long dentistId,
             [FromForm] int durationSeconds = 0)
@@ -68,11 +74,16 @@ namespace DentistAPI.Controllers
                 else
                 {
                     _logger.LogInformation($"[CONTROLLER LOG] Audio file received. Length: {audio.Length} bytes, Mime Type: {audio.ContentType}");
-                    using var ms = new MemoryStream();
-                    await audio.CopyToAsync(ms);
-                    var audioBytes = ms.ToArray();
+                    var validation = await _fileUploadService.ValidateAndExtractAsync(audio, FileUploadCategory.AudioRecording);
+                    if (!validation.IsValid)
+                    {
+                        _logger.LogWarning("[CONTROLLER LOG] Audio upload validation failed: {ErrorMessage}", validation.ErrorMessage);
+                        return BadRequest(new { message = validation.ErrorMessage });
+                    }
+
+                    var audioBytes = validation.FileBytes;
+                    mimeType = validation.CanonicalMimeType;
                     sha256Hash = Convert.ToHexString(SHA256.HashData(audioBytes)).ToLower();
-                    mimeType = audio.ContentType ?? "audio/webm";
 
                     _logger.LogInformation($"[CONTROLLER LOG] Computed audio file SHA256 Hash: {sha256Hash}. Invoking speech-to-text service...");
                     transcriptText = await _sttService.TranscribeAudioAsync(audioBytes, mimeType);
@@ -106,7 +117,7 @@ namespace DentistAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "An error occurred in ProcessRecording.");
-                return StatusCode(500, new { Error = ex.Message });
+                return StatusCode(500, new { message = "An unexpected error occurred while processing the audio recording. Please try again." });
             }
         }
 
@@ -300,7 +311,7 @@ namespace DentistAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error in ProcessLazy: {ex.Message}");
-                return StatusCode(500, new { Error = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while generating dental notes. Please try again." });
             }
         }
 
@@ -462,7 +473,7 @@ namespace DentistAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error in GetNote for NoteId: {noteId}");
-                return StatusCode(500, new { Error = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while retrieving the dental note." });
             }
         }
 
@@ -478,7 +489,7 @@ namespace DentistAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error in GetNotesByPatient for PatientId: {patientId}");
-                return StatusCode(500, new { Error = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while retrieving patient notes." });
             }
         }
 
@@ -495,7 +506,7 @@ namespace DentistAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error in DeleteNote for NoteId: {noteId}");
-                return StatusCode(500, new { Error = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while deleting the dental note." });
             }
         }
 
@@ -512,7 +523,7 @@ namespace DentistAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error in RestoreNote for NoteId: {noteId}");
-                return StatusCode(500, new { Error = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while restoring the dental note." });
             }
         }
 
@@ -532,7 +543,7 @@ namespace DentistAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error in UpdateNote for NoteId: {noteId}");
-                return StatusCode(500, new { Error = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while updating the dental note." });
             }
         }
 
@@ -554,6 +565,104 @@ namespace DentistAPI.Controllers
         {
             _logger.LogInformation($"ApproveNote called for NoteId: {noteId}");
             return Ok(new { message = "Note approved successfully." });
+        }
+
+        [HttpPost("from-radiograph")]
+        public async Task<IActionResult> CreateNoteFromRadiograph([FromBody] RadiographNoteRequest request)
+        {
+            _logger.LogInformation($"[CONTROLLER LOG] from-radiograph invoked for PatientId: {request.PatientId}, DentistId: {request.DentistId}, Image: {request.ImageName}");
+            try
+            {
+                if (request.PatientId <= 0)
+                {
+                    return BadRequest("Valid PatientId is required.");
+                }
+
+                // Create dedicated session for this radiographic evaluation
+                var session = new DentalNoteSession
+                {
+                    PatientId = request.PatientId,
+                    DentistId = request.DentistId > 0 ? request.DentistId : 1,
+                    Status = "completed",
+                    StartedAt = DateTime.UtcNow,
+                    CompletedAt = DateTime.UtcNow
+                };
+                var sessionId = await _repository.CreateSessionAsync(session);
+
+                string findingsNarrative = "";
+                if (request.Findings != null && request.Findings.Count > 0)
+                {
+                    findingsNarrative = string.Join("\n", request.Findings.Select(f => 
+                        $"• Tooth #{f.ToothNumber}: {f.Condition} (Severity: {f.Severity ?? "Moderate"}, Confidence: {f.Confidence ?? 90}%, Procedure: {f.Procedure ?? f.CdtCode ?? "CDT Evaluation"})"
+                    ));
+                }
+
+                string summary = !string.IsNullOrWhiteSpace(request.Summary)
+                    ? request.Summary
+                    : $"AI Radiographic Vision Analysis - {request.Modality} ({request.ImageName})";
+
+                string assessment = !string.IsNullOrWhiteSpace(request.Assessment)
+                    ? request.Assessment
+                    : (!string.IsNullOrWhiteSpace(findingsNarrative) ? findingsNarrative : "Pathological radiographic assessment recorded.");
+
+                string examination = !string.IsNullOrWhiteSpace(request.Examination)
+                    ? request.Examination
+                    : $"Diagnostic radiograph ({request.Modality} - {request.ImageName}) evaluated via Gemini Vision AI engine.";
+
+                string plan = !string.IsNullOrWhiteSpace(request.TreatmentPerformed)
+                    ? request.TreatmentPerformed
+                    : "Review clinical findings with patient and schedule planned restorative / endodontic procedures.";
+
+                var dentalNote = new DentalNote
+                {
+                    SessionId = sessionId,
+                    PatientId = request.PatientId,
+                    DentistId = request.DentistId > 0 ? request.DentistId : 1,
+                    Summary = summary,
+                    ChiefComplaint = request.ChiefComplaint ?? "Routine or diagnostic radiographic examination.",
+                    History = $"Digital radiograph acquired ({request.ImageName}).",
+                    Examination = examination,
+                    Assessment = assessment,
+                    TreatmentPerformed = plan,
+                    PostOpAdvice = request.PostOpAdvice ?? "Clinical examination and sensibility testing advised prior to final treatment.",
+                    FollowUp = request.FollowUp ?? "Follow up in 1 week or at next restorative appointment.",
+                    Status = "draft",
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                var noteId = await _repository.SaveDentalNoteAsync(dentalNote);
+                _logger.LogInformation($"[CONTROLLER LOG] Successfully created DentalNote #{noteId} from radiograph.");
+
+                // Auto-record in Clinical Logs
+                try
+                {
+                    await _dentalRepository.AddClinicalLogAsync(
+                        (int)request.PatientId,
+                        (int)(request.DentistId > 0 ? request.DentistId : 1),
+                        $"✨ AI Radiograph Note #{noteId} generated from {request.ImageName}: {summary}",
+                        "Radiograph Vision"
+                    );
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"[CONTROLLER LOG] Non-fatal: failed to add clinical log: {ex.Message}");
+                }
+
+                return Ok(new
+                {
+                    Success = true,
+                    NoteId = noteId,
+                    SessionId = sessionId,
+                    Message = "Radiograph diagnostic note created and synced to AI-Notes.",
+                    Note = dentalNote
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"[CONTROLLER LOG] Error in CreateNoteFromRadiograph: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred while creating note from radiograph." });
+            }
         }
     }
 

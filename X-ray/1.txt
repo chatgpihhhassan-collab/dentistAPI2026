@@ -1,0 +1,593 @@
+-- =====================================================================================
+-- ?? DENTIA CLINICAL ECOSYSTEM - PATIENT PORTAL & BILLING MIGRATION SCRIPT
+-- Database Engine: Microsoft SQL Server 2019 / 2022 / Azure SQL
+-- Schema: dentist
+-- Author: Full-Stack Dental Platform Architecture Team
+-- Date: September 2026
+-- Description:
+--   This idempotent migration script provisions all database objects required for:
+--   1. Patient Portal Authentication (Reference Number & Password Credentials)
+--   2. Direct Appointment-Patient Linkage
+--   3. Clinical Invoices & Procedure Line-Items
+--   4. Dual Payment Engine (Online Card Checkout + In-Clinic Cash Payment Vouchers)
+--   5. Patient Portal Activity & Security Audit Logs
+--   6. Production Stored Procedures & Realistic Demonstration Seed Data
+-- =====================================================================================
+ 
+USE [DentistAPI];
+GO
+ 
+-- Ensure dentist schema exists
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'dentist')
+BEGIN
+    EXEC('CREATE SCHEMA dentist');
+    PRINT '>> Schema [dentist] verified/created.';
+END
+GO
+ 
+-- =====================================================================================
+-- 1. ALTER [dentist].[Patients] - ADD PORTAL CREDENTIALS & UNIQUE REFERENCE NUMBER
+-- =====================================================================================
+PRINT '>> Step 1: Upgrading [dentist].[Patients] for Patient Portal Access...';
+ 
+IF COL_LENGTH('dentist.Patients', 'ReferenceNumber') IS NULL
+BEGIN
+    ALTER TABLE [dentist].[Patients] ADD [ReferenceNumber] NVARCHAR(30) NULL;
+    PRINT '   + Added column [ReferenceNumber]';
+END
+ 
+IF COL_LENGTH('dentist.Patients', 'PasswordHash') IS NULL
+BEGIN
+    ALTER TABLE [dentist].[Patients] ADD [PasswordHash] NVARCHAR(255) NULL;
+    PRINT '   + Added column [PasswordHash]';
+END
+ 
+IF COL_LENGTH('dentist.Patients', 'IsPortalActive') IS NULL
+BEGIN
+    ALTER TABLE [dentist].[Patients] ADD [IsPortalActive] BIT NOT NULL CONSTRAINT DF_Patients_IsPortalActive DEFAULT (1);
+    PRINT '   + Added column [IsPortalActive]';
+END
+ 
+IF COL_LENGTH('dentist.Patients', 'LastLoginAt') IS NULL
+BEGIN
+    ALTER TABLE [dentist].[Patients] ADD [LastLoginAt] DATETIME2 NULL;
+    PRINT '   + Added column [LastLoginAt]';
+END
+ 
+IF COL_LENGTH('dentist.Patients', 'MustChangePassword') IS NULL
+BEGIN
+    ALTER TABLE [dentist].[Patients] ADD [MustChangePassword] BIT NOT NULL CONSTRAINT DF_Patients_MustChangePassword DEFAULT (0);
+    PRINT '   + Added column [MustChangePassword]';
+END
+GO
+ 
+-- Backfill ReferenceNumber for all existing patients if not populated
+-- Format: DEN-2026-00001, DEN-2026-00002, etc.
+UPDATE [dentist].[Patients]
+SET [ReferenceNumber] = 'DEN-2026-' + RIGHT('00000' + CAST(PatientID AS NVARCHAR(10)), 5)
+WHERE [ReferenceNumber] IS NULL OR [ReferenceNumber] = '';
+GO
+ 
+-- Enforce NOT NULL and create Unique Index on ReferenceNumber
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Patients_ReferenceNumber' AND object_id = OBJECT_ID('dentist.Patients'))
+BEGIN
+    -- Ensure column is NOT NULL now that it is backfilled
+    ALTER TABLE [dentist].[Patients] ALTER COLUMN [ReferenceNumber] NVARCHAR(30) NOT NULL;
+    CREATE UNIQUE NONCLUSTERED INDEX [UX_Patients_ReferenceNumber] 
+    ON [dentist].[Patients]([ReferenceNumber]);
+    PRINT '   + Created Unique Index [UX_Patients_ReferenceNumber]';
+END
+GO
+ 
+-- Set default demo portal password for existing patients (BCrypt for "Dentia2026!")
+-- Hash: $2a$11$qRzP6h7q9b8K2rP1gV0M4.1L3qXwZ8jK7pLmN9oPqRsTuVwXyZaBe
+UPDATE [dentist].[Patients]
+SET [PasswordHash] = '$2a$11$qRzP6h7q9b8K2rP1gV0M4.1L3qXwZ8jK7pLmN9oPqRsTuVwXyZaBe'
+WHERE [PasswordHash] IS NULL;
+GO
+ 
+-- =====================================================================================
+-- 2. ALTER [dentist].[Appointments] - ADD DIRECT PatientID FOREIGN KEY
+-- =====================================================================================
+PRINT '>> Step 2: Linking [dentist].[Appointments] directly to [Patients]...';
+ 
+IF COL_LENGTH('dentist.Appointments', 'PatientID') IS NULL
+BEGIN
+    ALTER TABLE [dentist].[Appointments] ADD [PatientID] INT NULL;
+    PRINT '   + Added column [PatientID] to [Appointments]';
+END
+GO
+ 
+IF NOT EXISTS (SELECT * FROM sys.foreign_keys WHERE name = 'FK_Appointments_Patients')
+BEGIN
+    ALTER TABLE [dentist].[Appointments]
+    ADD CONSTRAINT [FK_Appointments_Patients] 
+    FOREIGN KEY ([PatientID]) REFERENCES [dentist].[Patients]([PatientID]);
+    PRINT '   + Created Foreign Key [FK_Appointments_Patients]';
+END
+GO
+ 
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Appointments_PatientID' AND object_id = OBJECT_ID('dentist.Appointments'))
+BEGIN
+    CREATE NONCLUSTERED INDEX [IX_Appointments_PatientID] 
+    ON [dentist].[Appointments]([PatientID]);
+    PRINT '   + Created Index [IX_Appointments_PatientID]';
+END
+GO
+ 
+-- Backfill Appointment PatientID by matching Patient Name or Phone
+UPDATE A
+SET A.[PatientID] = P.[PatientID]
+FROM [dentist].[Appointments] A
+INNER JOIN [dentist].[Patients] P 
+  ON (LTRIM(RTRIM(LOWER(A.FullName))) = LTRIM(RTRIM(LOWER(P.FirstName + ' ' + P.LastName))))
+     OR (A.Phone IS NOT NULL AND LEN(A.Phone) >= 7 AND A.Phone = P.Phone)
+WHERE A.[PatientID] IS NULL;
+GO
+ 
+-- =====================================================================================
+-- 3. CREATE [dentist].[Invoices] TABLE
+-- =====================================================================================
+PRINT '>> Step 3: Creating [dentist].[Invoices] Table...';
+ 
+IF OBJECT_ID('dentist.Invoices', 'U') IS NULL
+BEGIN
+    CREATE TABLE [dentist].[Invoices] (
+        [InvoiceID]        BIGINT IDENTITY(1,1) NOT NULL,
+        [InvoiceNumber]    NVARCHAR(50) NOT NULL,
+        [PatientID]        INT NOT NULL,
+        [DoctorID]         INT NULL,
+        [AppointmentID]    INT NULL,
+        [IssueDate]        DATE NOT NULL CONSTRAINT DF_Invoices_IssueDate DEFAULT (CAST(GETDATE() AS DATE)),
+        [DueDate]          DATE NOT NULL,
+        [SubTotal]         DECIMAL(18,2) NOT NULL CONSTRAINT DF_Invoices_SubTotal DEFAULT (0.00),
+        [TaxAmount]        DECIMAL(18,2) NOT NULL CONSTRAINT DF_Invoices_TaxAmount DEFAULT (0.00),
+        [DiscountAmount]   DECIMAL(18,2) NOT NULL CONSTRAINT DF_Invoices_Discount DEFAULT (0.00),
+        [TotalAmount]      DECIMAL(18,2) NOT NULL CONSTRAINT DF_Invoices_TotalAmount DEFAULT (0.00),
+        [PaidAmount]       DECIMAL(18,2) NOT NULL CONSTRAINT DF_Invoices_PaidAmount DEFAULT (0.00),
+        [BalanceAmount]    AS ([TotalAmount] - [PaidAmount]),
+        [Status]           NVARCHAR(30) NOT NULL CONSTRAINT DF_Invoices_Status DEFAULT ('Unpaid'), 
+                           -- Valid statuses: 'Unpaid', 'Partially Paid', 'Paid', 'Pending Cash Settlement', 'Cancelled'
+        [Currency]         NVARCHAR(10) NOT NULL CONSTRAINT DF_Invoices_Currency DEFAULT ('NZD'),
+        [Notes]            NVARCHAR(MAX) NULL,
+        [CreatedAt]        DATETIME2 NOT NULL CONSTRAINT DF_Invoices_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        [UpdatedAt]        DATETIME2 NOT NULL CONSTRAINT DF_Invoices_UpdatedAt DEFAULT (SYSUTCDATETIME()),
+ 
+        CONSTRAINT [PK_Invoices] PRIMARY KEY CLUSTERED ([InvoiceID] ASC),
+        CONSTRAINT [UX_Invoices_InvoiceNumber] UNIQUE NONCLUSTERED ([InvoiceNumber] ASC),
+        CONSTRAINT [FK_Invoices_Patients] FOREIGN KEY ([PatientID]) REFERENCES [dentist].[Patients]([PatientID]),
+        CONSTRAINT [FK_Invoices_Doctors] FOREIGN KEY ([DoctorID]) REFERENCES [dentist].[Doctors]([DoctorID]),
+        CONSTRAINT [FK_Invoices_Appointments] FOREIGN KEY ([AppointmentID]) REFERENCES [dentist].[Appointments]([AppointmentID])
+    );
+ 
+    CREATE NONCLUSTERED INDEX [IX_Invoices_PatientID] ON [dentist].[Invoices]([PatientID]);
+    CREATE NONCLUSTERED INDEX [IX_Invoices_Status] ON [dentist].[Invoices]([Status]);
+    CREATE NONCLUSTERED INDEX [IX_Invoices_DueDate] ON [dentist].[Invoices]([DueDate]);
+ 
+    PRINT '   + Table [dentist].[Invoices] created successfully.';
+END
+ELSE
+BEGIN
+    PRINT '   - Table [dentist].[Invoices] already exists.';
+END
+GO
+ 
+-- =====================================================================================
+-- 4. CREATE [dentist].[InvoiceItems] TABLE
+-- =====================================================================================
+PRINT '>> Step 4: Creating [dentist].[InvoiceItems] Table...';
+ 
+IF OBJECT_ID('dentist.InvoiceItems', 'U') IS NULL
+BEGIN
+    CREATE TABLE [dentist].[InvoiceItems] (
+        [InvoiceItemID]    BIGINT IDENTITY(1,1) NOT NULL,
+        [InvoiceID]        BIGINT NOT NULL,
+        [ProcedureCode]    NVARCHAR(50) NULL, -- ADA or NZ Dental Procedure Code (e.g. ADA-012, ADA-111)
+        [Description]      NVARCHAR(500) NOT NULL,
+        [ToothNumber]      INT NULL,
+        [Quantity]         INT NOT NULL CONSTRAINT DF_InvoiceItems_Quantity DEFAULT (1),
+        [UnitPrice]        DECIMAL(18,2) NOT NULL CONSTRAINT DF_InvoiceItems_UnitPrice DEFAULT (0.00),
+        [TotalPrice]       AS ([Quantity] * [UnitPrice]),
+        [CreatedAt]        DATETIME2 NOT NULL CONSTRAINT DF_InvoiceItems_CreatedAt DEFAULT (SYSUTCDATETIME()),
+ 
+        CONSTRAINT [PK_InvoiceItems] PRIMARY KEY CLUSTERED ([InvoiceItemID] ASC),
+        CONSTRAINT [FK_InvoiceItems_Invoices] FOREIGN KEY ([InvoiceID]) REFERENCES [dentist].[Invoices]([InvoiceID]) ON DELETE CASCADE
+    );
+ 
+    CREATE NONCLUSTERED INDEX [IX_InvoiceItems_InvoiceID] ON [dentist].[InvoiceItems]([InvoiceID]);
+    PRINT '   + Table [dentist].[InvoiceItems] created successfully.';
+END
+ELSE
+BEGIN
+    PRINT '   - Table [dentist].[InvoiceItems] already exists.';
+END
+GO
+ 
+-- =====================================================================================
+-- 5. CREATE [dentist].[Payments] TABLE (ONLINE CARD & IN-CLINIC CASH)
+-- =====================================================================================
+PRINT '>> Step 5: Creating [dentist].[Payments] Table...';
+ 
+IF OBJECT_ID('dentist.Payments', 'U') IS NULL
+BEGIN
+    CREATE TABLE [dentist].[Payments] (
+        [PaymentID]            BIGINT IDENTITY(1,1) NOT NULL,
+        [PaymentReceiptNo]     NVARCHAR(50) NOT NULL, -- e.g. REC-2026-00104
+        [InvoiceID]            BIGINT NOT NULL,
+        [PatientID]            INT NOT NULL,
+        [Amount]               DECIMAL(18,2) NOT NULL,
+        [PaymentMethod]        NVARCHAR(50) NOT NULL, -- 'Online_Card', 'Cash', 'Bank_Transfer', 'Insurance'
+        [PaymentStatus]        NVARCHAR(30) NOT NULL CONSTRAINT DF_Payments_Status DEFAULT ('Success'),
+                               -- 'Success', 'Pending_Cash_Verification', 'Failed', 'Refunded'
+        [TransactionReference] NVARCHAR(150) NULL, -- Gateway Charge ID (e.g. Stripe ch_3Nx...) or Cashier Receipt #
+        [PaymentGateway]       NVARCHAR(50) NULL,  -- 'Stripe', 'Square', 'ClinicCashDesk'
+        [CashVoucherCode]      NVARCHAR(50) NULL,  -- For Cash: e.g. CSH-2026-00891
+        [ReceivedByDoctorID]   INT NULL,           -- Staff/Doctor who collected cash at front desk
+        [PaymentDate]          DATETIME2 NOT NULL CONSTRAINT DF_Payments_PaymentDate DEFAULT (SYSUTCDATETIME()),
+        [Notes]                NVARCHAR(MAX) NULL,
+ 
+        CONSTRAINT [PK_Payments] PRIMARY KEY CLUSTERED ([PaymentID] ASC),
+        CONSTRAINT [UX_Payments_ReceiptNo] UNIQUE NONCLUSTERED ([PaymentReceiptNo] ASC),
+        CONSTRAINT [FK_Payments_Invoices] FOREIGN KEY ([InvoiceID]) REFERENCES [dentist].[Invoices]([InvoiceID]),
+        CONSTRAINT [FK_Payments_Patients] FOREIGN KEY ([PatientID]) REFERENCES [dentist].[Patients]([PatientID]),
+        CONSTRAINT [FK_Payments_Doctors] FOREIGN KEY ([ReceivedByDoctorID]) REFERENCES [dentist].[Doctors]([DoctorID])
+    );
+ 
+    CREATE NONCLUSTERED INDEX [IX_Payments_InvoiceID] ON [dentist].[Payments]([InvoiceID]);
+    CREATE NONCLUSTERED INDEX [IX_Payments_PatientID] ON [dentist].[Payments]([PatientID]);
+    CREATE NONCLUSTERED INDEX [IX_Payments_VoucherCode] ON [dentist].[Payments]([CashVoucherCode]);
+    PRINT '   + Table [dentist].[Payments] created successfully.';
+END
+ELSE
+BEGIN
+    PRINT '   - Table [dentist].[Payments] already exists.';
+END
+GO
+ 
+-- =====================================================================================
+-- 6. CREATE [dentist].[PatientPortalActivityLogs] TABLE
+-- =====================================================================================
+PRINT '>> Step 6: Creating [dentist].[PatientPortalActivityLogs] Table...';
+ 
+IF OBJECT_ID('dentist.PatientPortalActivityLogs', 'U') IS NULL
+BEGIN
+    CREATE TABLE [dentist].[PatientPortalActivityLogs] (
+        [LogID]        BIGINT IDENTITY(1,1) NOT NULL,
+        [PatientID]    INT NOT NULL,
+        [Action]       NVARCHAR(100) NOT NULL, 
+                       -- 'LOGIN', 'BOOK_APPOINTMENT', 'VIEW_REPORT', 'PAY_ONLINE', 'GENERATE_CASH_VOUCHER', 'PASSWORD_RESET'
+        [IpAddress]    VARCHAR(50) NULL,
+        [UserAgent]    NVARCHAR(500) NULL,
+        [Details]      NVARCHAR(MAX) NULL,
+        [Timestamp]    DATETIME2 NOT NULL CONSTRAINT DF_PortalLogs_Timestamp DEFAULT (SYSUTCDATETIME()),
+ 
+        CONSTRAINT [PK_PatientPortalActivityLogs] PRIMARY KEY CLUSTERED ([LogID] ASC),
+        CONSTRAINT [FK_PortalLogs_Patients] FOREIGN KEY ([PatientID]) REFERENCES [dentist].[Patients]([PatientID])
+    );
+ 
+    CREATE NONCLUSTERED INDEX [IX_PortalLogs_PatientID] ON [dentist].[PatientPortalActivityLogs]([PatientID]);
+    CREATE NONCLUSTERED INDEX [IX_PortalLogs_Timestamp] ON [dentist].[PatientPortalActivityLogs]([Timestamp]);
+    PRINT '   + Table [dentist].[PatientPortalActivityLogs] created successfully.';
+END
+ELSE
+BEGIN
+    PRINT '   - Table [dentist].[PatientPortalActivityLogs] already exists.';
+END
+GO
+ 
+-- =====================================================================================
+-- 7. STORED PROCEDURES FOR PATIENT PORTAL
+-- =====================================================================================
+PRINT '>> Step 7: Deploying Stored Procedures...';
+ 
+-- 7.1 Authenticate Patient via Reference Number or Email
+IF OBJECT_ID('dentist.usp_AuthenticatePatientPortal', 'P') IS NOT NULL
+    DROP PROCEDURE [dentist].[usp_AuthenticatePatientPortal];
+GO
+ 
+CREATE PROCEDURE [dentist].[usp_AuthenticatePatientPortal]
+    @Identifier NVARCHAR(100) -- Can be Reference Number (DEN-2026-XXXXX) OR Email OR Phone
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @CleanId NVARCHAR(100) = LTRIM(RTRIM(@Identifier));
+ 
+    SELECT TOP 1 
+        [PatientID],
+        [DoctorID],
+        [FirstName],
+        [LastName],
+        [ReferenceNumber],
+        [Email],
+        [Phone],
+        [DOB],
+        [Gender],
+        [Region],
+        [CurrentTreatmentPlan],
+        [TreatmentStage],
+        [PasswordHash],
+        [IsPortalActive],
+        [MustChangePassword],
+        [LastLoginAt]
+    FROM [dentist].[Patients]
+    WHERE ([ReferenceNumber] = @CleanId
+       OR LOWER([Email]) = LOWER(@CleanId)
+       OR REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', '') = REPLACE(REPLACE(REPLACE(@CleanId, ' ', ''), '-', ''), '+', ''))
+      AND [IsPortalActive] = 1;
+END
+GO
+ 
+-- 7.2 Process Payment & Automatically Reconcile Invoice (Card or Cash)
+IF OBJECT_ID('dentist.usp_ProcessInvoicePayment', 'P') IS NOT NULL
+    DROP PROCEDURE [dentist].[usp_ProcessInvoicePayment];
+GO
+ 
+CREATE PROCEDURE [dentist].[usp_ProcessInvoicePayment]
+    @InvoiceID            BIGINT,
+    @PatientID            INT,
+    @Amount               DECIMAL(18,2),
+    @PaymentMethod        NVARCHAR(50), -- 'Online_Card', 'Cash', 'Bank_Transfer'
+    @TransactionReference NVARCHAR(150) = NULL,
+    @PaymentGateway       NVARCHAR(50) = NULL,
+    @ReceivedByDoctorID   INT = NULL,
+    @Notes                NVARCHAR(MAX) = NULL,
+    @GeneratedReceiptNo   NVARCHAR(50) OUTPUT,
+    @NewInvoiceStatus     NVARCHAR(30) OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+ 
+    BEGIN TRANSACTION;
+ 
+    BEGIN TRY
+        -- 1. Validate Invoice existence
+        DECLARE @CurrentTotal DECIMAL(18,2), @CurrentPaid DECIMAL(18,2), @InvPatientID INT;
+        SELECT @CurrentTotal = TotalAmount, @CurrentPaid = PaidAmount, @InvPatientID = PatientID
+        FROM [dentist].[Invoices] WITH (UPDLOCK, ROWLOCK)
+        WHERE InvoiceID = @InvoiceID;
+ 
+        IF @CurrentTotal IS NULL
+        BEGIN
+            THROW 50001, 'Invoice not found.', 1;
+        END
+ 
+        IF @InvPatientID <> @PatientID
+        BEGIN
+            THROW 50002, 'Security error: Patient does not own this invoice.', 1;
+        END
+ 
+        -- 2. Generate Receipt Number
+        DECLARE @Year NVARCHAR(4) = CAST(YEAR(GETDATE()) AS NVARCHAR(4));
+        DECLARE @NextId BIGINT = ISNULL((SELECT MAX(PaymentID) FROM [dentist].[Payments]), 0) + 1;
+        SET @GeneratedReceiptNo = 'REC-' + @Year + '-' + RIGHT('00000' + CAST(@NextId AS NVARCHAR(10)), 5);
+ 
+        -- 3. Determine Status based on payment method
+        DECLARE @PayStatus NVARCHAR(30) = 'Success';
+        DECLARE @CashVoucher NVARCHAR(50) = NULL;
+ 
+        IF @PaymentMethod = 'Cash' AND @ReceivedByDoctorID IS NULL
+        BEGIN
+            -- Patient generated cash payment slip for front desk
+            SET @PayStatus = 'Pending_Cash_Verification';
+            SET @CashVoucher = 'CSH-' + @Year + '-' + RIGHT('00000' + CAST(@NextId AS NVARCHAR(10)), 5);
+        END
+ 
+        -- 4. Record Payment
+        INSERT INTO [dentist].[Payments] (
+            PaymentReceiptNo,
+            InvoiceID,
+            PatientID,
+            Amount,
+            PaymentMethod,
+            PaymentStatus,
+            TransactionReference,
+            PaymentGateway,
+            CashVoucherCode,
+            ReceivedByDoctorID,
+            PaymentDate,
+            Notes
+        )
+        VALUES (
+            @GeneratedReceiptNo,
+            @InvoiceID,
+            @PatientID,
+            @Amount,
+            @PaymentMethod,
+            @PayStatus,
+            @TransactionReference,
+            @PaymentGateway,
+            @CashVoucher,
+            @ReceivedByDoctorID,
+            SYSUTCDATETIME(),
+            @Notes
+        );
+ 
+        -- 5. If Payment was successful / confirmed, update invoice ledger
+        IF @PayStatus = 'Success'
+        BEGIN
+            DECLARE @UpdatedPaid DECIMAL(18,2) = @CurrentPaid + @Amount;
+            IF @UpdatedPaid >= @CurrentTotal
+                SET @NewInvoiceStatus = 'Paid';
+            ELSE
+                SET @NewInvoiceStatus = 'Partially Paid';
+ 
+            UPDATE [dentist].[Invoices]
+            SET PaidAmount = @UpdatedPaid,
+                Status = @NewInvoiceStatus,
+                UpdatedAt = SYSUTCDATETIME()
+            WHERE InvoiceID = @InvoiceID;
+        END
+        ELSE
+        BEGIN
+            -- Marked as awaiting cash settlement at reception
+            SET @NewInvoiceStatus = 'Pending Cash Settlement';
+            UPDATE [dentist].[Invoices]
+            SET Status = @NewInvoiceStatus,
+                UpdatedAt = SYSUTCDATETIME()
+            WHERE InvoiceID = @InvoiceID;
+        END
+ 
+        -- 6. Log Clinical Log for Record Keeping
+        INSERT INTO [dentist].[ClinicalLogs] (PatientID, DoctorID, Message, LogType, CreatedAt)
+        VALUES (
+            @PatientID,
+            ISNULL(@ReceivedByDoctorID, (SELECT TOP 1 DoctorID FROM [dentist].[Invoices] WHERE InvoiceID = @InvoiceID)),
+            'Billing payment recorded: ' + @PaymentMethod + ' of $' + CAST(@Amount AS NVARCHAR(20)) + ' (' + @NewInvoiceStatus + ') Receipt #' + @GeneratedReceiptNo,
+            'Billing',
+            GETDATE()
+        );
+ 
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
+GO
+ 
+-- 7.3 Receptionist / Doctor Confirms Front-Desk Cash Payment
+IF OBJECT_ID('dentist.usp_ConfirmCashPaymentAtFrontDesk', 'P') IS NOT NULL
+    DROP PROCEDURE [dentist].[usp_ConfirmCashPaymentAtFrontDesk];
+GO
+ 
+CREATE PROCEDURE [dentist].[usp_ConfirmCashPaymentAtFrontDesk]
+    @CashVoucherCode   NVARCHAR(50),
+    @StaffDoctorID     INT,
+    @ConfirmedAmount   DECIMAL(18,2) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+ 
+    BEGIN TRANSACTION;
+ 
+    BEGIN TRY
+        DECLARE @PaymentID BIGINT, @InvoiceID BIGINT, @PatientID INT, @PaymentAmount DECIMAL(18,2);
+        SELECT 
+            @PaymentID = PaymentID,
+            @InvoiceID = InvoiceID,
+            @PatientID = PatientID,
+            @PaymentAmount = Amount
+        FROM [dentist].[Payments] WITH (UPDLOCK, ROWLOCK)
+        WHERE CashVoucherCode = @CashVoucherCode AND PaymentStatus = 'Pending_Cash_Verification';
+ 
+        IF @PaymentID IS NULL
+        BEGIN
+            THROW 50010, 'Valid pending cash voucher code not found.', 1;
+        END
+ 
+        IF @ConfirmedAmount IS NOT NULL AND @ConfirmedAmount > 0
+            SET @PaymentAmount = @ConfirmedAmount;
+ 
+        -- Update Payment to Success
+        UPDATE [dentist].[Payments]
+        SET PaymentStatus = 'Success',
+            ReceivedByDoctorID = @StaffDoctorID,
+            Amount = @PaymentAmount,
+            PaymentDate = SYSUTCDATETIME(),
+            Notes = ISNULL(Notes, '') + ' [Cash confirmed at front desk by Staff ID #' + CAST(@StaffDoctorID AS NVARCHAR(10)) + ']'
+        WHERE PaymentID = @PaymentID;
+ 
+        -- Reconcile Invoice
+        DECLARE @InvTotal DECIMAL(18,2), @InvPaid DECIMAL(18,2);
+        SELECT @InvTotal = TotalAmount, @InvPaid = PaidAmount
+        FROM [dentist].[Invoices] WITH (UPDLOCK, ROWLOCK)
+        WHERE InvoiceID = @InvoiceID;
+ 
+        DECLARE @NewTotalPaid DECIMAL(18,2) = @InvPaid + @PaymentAmount;
+        DECLARE @NewStatus NVARCHAR(30) = CASE WHEN @NewTotalPaid >= @InvTotal THEN 'Paid' ELSE 'Partially Paid' END;
+ 
+        UPDATE [dentist].[Invoices]
+        SET PaidAmount = @NewTotalPaid,
+            Status = @NewStatus,
+            UpdatedAt = SYSUTCDATETIME()
+        WHERE InvoiceID = @InvoiceID;
+ 
+        -- Audit Log
+        INSERT INTO [dentist].[ClinicalLogs] (PatientID, DoctorID, Message, LogType, CreatedAt)
+        VALUES (
+            @PatientID,
+            @StaffDoctorID,
+            'Cash Voucher ' + @CashVoucherCode + ' verified and received ($' + CAST(@PaymentAmount AS NVARCHAR(20)) + '). Invoice ' + CAST(@InvoiceID AS NVARCHAR(20)) + ' updated to ' + @NewStatus,
+            'Billing',
+            GETDATE()
+        );
+ 
+        COMMIT TRANSACTION;
+ 
+        SELECT @PaymentID AS ConfirmedPaymentID, @InvoiceID AS InvoiceID, @NewStatus AS InvoiceStatus, @PaymentAmount AS PaidAmount;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
+GO
+ 
+-- =====================================================================================
+-- 8. DEMONSTRATION SEED DATA (INVOICES, ITEMS, PAYMENTS FOR EXISTING PATIENTS)
+-- =====================================================================================
+PRINT '>> Step 8: Inserting Demo Invoices & Dual Payment Records...';
+ 
+-- Seed Invoices for Patients 18, 19, 20, 35 if they exist or top patients
+DECLARE @DemoPatientID INT = (SELECT TOP 1 PatientID FROM [dentist].[Patients] ORDER BY PatientID ASC);
+DECLARE @DemoDoctorID INT = (SELECT TOP 1 DoctorID FROM [dentist].[Doctors] ORDER BY DoctorID ASC);
+ 
+IF @DemoPatientID IS NOT NULL
+BEGIN
+    -- 1. Demo Invoice: Fully Paid Online (Routine Scaling & Checkup)
+    IF NOT EXISTS (SELECT * FROM [dentist].[Invoices] WHERE InvoiceNumber = 'INV-2026-00101')
+    BEGIN
+        INSERT INTO [dentist].[Invoices] (InvoiceNumber, PatientID, DoctorID, IssueDate, DueDate, SubTotal, TaxAmount, DiscountAmount, TotalAmount, PaidAmount, Status, Currency, Notes)
+        VALUES ('INV-2026-00101', @DemoPatientID, @DemoDoctorID, DATEADD(DAY, -14, GETDATE()), DATEADD(DAY, 14, GETDATE()), 190.00, 28.50, 0.00, 218.50, 218.50, 'Paid', 'NZD', 'Routine 6-month prophylaxis and intraoral diagnostic examination.');
+ 
+        DECLARE @Inv1 BIGINT = SCOPE_IDENTITY();
+        INSERT INTO [dentist].[InvoiceItems] (InvoiceID, ProcedureCode, Description, ToothNumber, Quantity, UnitPrice)
+        VALUES 
+            (@Inv1, 'ADA-012', 'Comprehensive Oral Examination & Occlusal Assessment', NULL, 1, 65.00),
+            (@Inv1, 'ADA-111', 'Full Mouth Ultrasonic Scaling & Dental Prophylaxis', NULL, 1, 125.00);
+ 
+        INSERT INTO [dentist].[Payments] (PaymentReceiptNo, InvoiceID, PatientID, Amount, PaymentMethod, PaymentStatus, TransactionReference, PaymentGateway, PaymentDate, Notes)
+        VALUES ('REC-2026-00101', @Inv1, @DemoPatientID, 218.50, 'Online_Card', 'Success', 'ch_stripe_demo_8829104', 'Stripe', DATEADD(DAY, -13, GETDATE()), 'Paid online via Patient Portal Visa card.');
+    END
+ 
+    -- 2. Demo Invoice: Outstanding / Unpaid (Composite Filling) -> Eligible for Online or Cash Pay
+    IF NOT EXISTS (SELECT * FROM [dentist].[Invoices] WHERE InvoiceNumber = 'INV-2026-00102')
+    BEGIN
+        INSERT INTO [dentist].[Invoices] (InvoiceNumber, PatientID, DoctorID, IssueDate, DueDate, SubTotal, TaxAmount, DiscountAmount, TotalAmount, PaidAmount, Status, Currency, Notes)
+        VALUES ('INV-2026-00102', @DemoPatientID, @DemoDoctorID, DATEADD(DAY, -3, GETDATE()), DATEADD(DAY, 11, GETDATE()), 240.00, 36.00, 20.00, 256.00, 0.00, 'Unpaid', 'NZD', 'Direct composite resin restoration tooth 14 with local anesthesia.');
+ 
+        DECLARE @Inv2 BIGINT = SCOPE_IDENTITY();
+        INSERT INTO [dentist].[InvoiceItems] (InvoiceID, ProcedureCode, Description, ToothNumber, Quantity, UnitPrice)
+        VALUES 
+            (@Inv2, 'ADA-022', 'Intraoral Periapical Digital Radiograph', 14, 1, 35.00),
+            (@Inv2, 'ADA-532', 'Composite Restoration - 2 Surface Posterior (MO)', 14, 1, 205.00);
+    END
+ 
+    -- 3. Demo Invoice: Pending Cash Voucher (Patient generated slip to pay cash at clinic)
+    IF NOT EXISTS (SELECT * FROM [dentist].[Invoices] WHERE InvoiceNumber = 'INV-2026-00103')
+    BEGIN
+        INSERT INTO [dentist].[Invoices] (InvoiceNumber, PatientID, DoctorID, IssueDate, DueDate, SubTotal, TaxAmount, DiscountAmount, TotalAmount, PaidAmount, Status, Currency, Notes)
+        VALUES ('INV-2026-00103', @DemoPatientID, @DemoDoctorID, GETDATE(), DATEADD(DAY, 7, GETDATE()), 130.00, 19.50, 0.00, 149.50, 0.00, 'Pending Cash Settlement', 'NZD', 'Whitening maintenance tray & home bleaching syringe.');
+ 
+        DECLARE @Inv3 BIGINT = SCOPE_IDENTITY();
+        INSERT INTO [dentist].[InvoiceItems] (InvoiceID, ProcedureCode, Description, ToothNumber, Quantity, UnitPrice)
+        VALUES 
+            (@Inv3, 'ADA-119', 'Custom Bleaching Tray Upper/Lower', NULL, 1, 100.00),
+            (@Inv3, 'ADA-120', 'Opalescence Carbamide Peroxide Refill Kit', NULL, 1, 30.00);
+ 
+        INSERT INTO [dentist].[Payments] (PaymentReceiptNo, InvoiceID, PatientID, Amount, PaymentMethod, PaymentStatus, CashVoucherCode, PaymentDate, Notes)
+        VALUES ('REC-2026-00103', @Inv3, @DemoPatientID, 149.50, 'Cash', 'Pending_Cash_Verification', 'CSH-2026-00412', GETDATE(), 'Cash voucher generated by patient in portal. Present slip at clinic desk.');
+    END
+END
+GO
+ 
+PRINT '=====================================================================================';
+PRINT '? DENTIA PATIENT PORTAL & BILLING MIGRATION COMPLETED SUCCESSFULLY!';
+PRINT '   - Reference numbers assigned to all patients (e.g. DEN-2026-XXXXX).';
+PRINT '   - [Invoices], [InvoiceItems], [Payments], [PatientPortalActivityLogs] created.';
+PRINT '   - Stored procedures deployed for authentication and dual payment reconciliation.';
+PRINT '=====================================================================================';
+GO

@@ -1,15 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navigation from '../components/Navigation';
 import Footer from '../components/Footer';
 import { 
     Search, ChevronLeft, ChevronRight, Plus, Calendar, Clock, 
     Sparkles, Activity, CheckCircle2, Save, Loader2, Smile, ShieldAlert, Check, X, RotateCcw,
-    Download, FileText, Filter, Eye, ChevronDown, RefreshCw, Pencil, Camera, UploadCloud, Trash2
+    Download, FileText, Filter, Eye, ChevronDown, RefreshCw, Pencil, Camera, UploadCloud, Trash2,
+    CreditCard, Stethoscope
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import '../index.css';
 import { getPatientAvatarUrl, validateImageFile, fileToDataUrl } from '../utils/avatarUtils';
+import { preloadJawImages, preloadPatientJawTemplates } from '../utils/jawImagePreloader';
+import { fetchWithCache, prefetchApi, invalidateCache, setCachedData } from '../utils/apiCache';
+import FullPageSkeletonLoader from '../components/FullPageSkeletonLoader';
 
 export default function PatientDirectory() {
     const [patients, setPatients] = useState([]);
@@ -19,6 +23,13 @@ export default function PatientDirectory() {
     const [selectedPatient, setSelectedPatient] = useState(null);
     const navigate = useNavigate();
     const editFileInputRef = useRef(null);
+
+    // 🌟 100% Coordinated Full-Page Loading & Synchronization States
+    const [isPageLoading, setIsPageLoading] = useState(true);
+    const [loadProgress, setLoadProgress] = useState(15);
+    const [loadStatusMessage, setLoadStatusMessage] = useState('Initializing clinician security session...');
+    const [isReadyBadgeVisible, setIsReadyBadgeVisible] = useState(false);
+    const [isSlowConnection, setIsSlowConnection] = useState(false);
 
     // Pagination State
     const [currentPage, setCurrentPage] = useState(1);
@@ -127,7 +138,7 @@ export default function PatientDirectory() {
         if (!editPatientModal.patient) return;
         setSavingEdit(true);
         try {
-            const res = await fetch(`http://localhost:5107/api/patients/${editPatientModal.patient.patientID}`, {
+            const res = await fetch(`/api/patients/${editPatientModal.patient.patientID}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -146,6 +157,9 @@ export default function PatientDirectory() {
                 if (selectedPatient && selectedPatient.patientID === updated.patientID) {
                     setSelectedPatient(prev => ({ ...prev, ...updated }));
                 }
+                invalidateCache('doctor_' + (doctor?.doctorID || '') + '_patients');
+                invalidateCache(`patient_${updated.patientID}`);
+                setCachedData(`patient_${updated.patientID}`, updated);
                 setEditPatientModal({ visible: false, patient: null });
                 showToast('Patient information updated successfully!');
             } else {
@@ -199,7 +213,7 @@ export default function PatientDirectory() {
         try {
             const docId = doctor?.doctorID || 1;
             // 1. Reset treatment plan in Patients table to empty / NULL
-            await fetch(`http://localhost:5107/api/patients/${selectedPatient.patientID}/treatment-plan`, {
+            await fetch(`/api/patients/${selectedPatient.patientID}/treatment-plan`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -210,7 +224,7 @@ export default function PatientDirectory() {
             });
 
             // 2. Insert clinical log entry documenting the revert
-            await fetch(`http://localhost:5107/api/patients/${selectedPatient.patientID}/clinical-logs`, {
+            await fetch(`/api/patients/${selectedPatient.patientID}/clinical-logs`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -234,6 +248,9 @@ export default function PatientDirectory() {
                 targetShade: null
             } : p));
 
+            invalidateCache('doctor_' + (doctor?.doctorID || '') + '_patients');
+            invalidateCache(`patient_${selectedPatient.patientID}`);
+
             setActiveTreatmentTag(null);
             setIsTreatmentDrawerOpen(false);
             if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
@@ -252,7 +269,7 @@ export default function PatientDirectory() {
         try {
             const docId = doctor?.doctorID || 1;
             // Revert tooth state to Healthy in DB
-            await fetch('http://localhost:5107/api/patients/teeth/update-bulk', {
+            await fetch('/api/patients/teeth/update-bulk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -266,7 +283,7 @@ export default function PatientDirectory() {
                 })
             });
 
-            await fetch(`http://localhost:5107/api/patients/${selectedPatient.patientID}/clinical-logs`, {
+            await fetch(`/api/patients/${selectedPatient.patientID}/clinical-logs`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -287,23 +304,54 @@ export default function PatientDirectory() {
     };
 
     useEffect(() => {
+        // Speculatively preload jaw arch templates in background during idle moments
+        const preloadTimer = setTimeout(() => {
+            preloadJawImages();
+        }, 1200);
+
         return () => {
+            clearTimeout(preloadTimer);
             if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
         };
     }, []);
 
+    const patientChartsCacheRef = useRef({});
     const fetchPatientChart = (pId) => {
-        fetch(`http://localhost:5107/api/patients/${pId}/chart`)
+        if (!pId) return;
+        if (patientChartsCacheRef.current[pId]) {
+            setSelectedTeethState(patientChartsCacheRef.current[pId]);
+            return;
+        }
+        fetch(`/api/patients/${pId}/chart`)
             .then(res => res.json())
-            .then(data => setSelectedTeethState(data))
+            .then(data => {
+                const safeData = Array.isArray(data) ? data : [];
+                patientChartsCacheRef.current[pId] = safeData;
+                setSelectedTeethState(safeData);
+            })
             .catch(err => console.error(err));
     };
 
-    const handleExportLogsPDF = () => {
+    const handleExportLogsPDF = async () => {
         if (!selectedPatient) {
             showToast('Please select a patient first', 'error');
             return;
         }
+
+        let exportLogs = clinicalLogs;
+        if (!exportLogs || exportLogs.length === 0) {
+            try {
+                const res = await fetch(`/api/patients/${selectedPatient.patientID}/clinical-logs`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data)) {
+                        exportLogs = data;
+                        setClinicalLogs(data);
+                    }
+                }
+            } catch (e) {}
+        }
+        exportLogs = Array.isArray(exportLogs) ? exportLogs : [];
 
         const pName = `${selectedPatient.firstName || ''} ${selectedPatient.lastName || ''}`.trim() || 'Patient';
         const pId = selectedPatient.patientID || 'N/A';
@@ -364,17 +412,17 @@ export default function PatientDirectory() {
             pdf.text(docName, margin + 128, 30);
             pdf.text(`${getAge(selectedPatient.dob)} yrs · ${selectedPatient.gender || 'Unspecified'}`, margin + 32, 38);
             pdf.text(`${exportDate} ${exportTime}`, margin + 128, 38);
-            pdf.text(`${clinicalLogs.length} Entries`, margin + 32, 44);
+            pdf.text(`${exportLogs.length} Entries`, margin + 32, 44);
 
             let currentY = 54;
 
-            if (clinicalLogs.length === 0) {
+            if (exportLogs.length === 0) {
                 pdf.setFont('helvetica', 'italic');
                 pdf.setFontSize(9);
                 pdf.setTextColor(148, 163, 184);
                 pdf.text('No clinical activity logs recorded for this patient yet.', margin + 4, currentY + 10);
             } else {
-                clinicalLogs.forEach((log, index) => {
+                exportLogs.forEach((log, index) => {
                     if (currentY > pageHeight - 35) {
                         pdf.addPage();
                         pageNumber++;
@@ -469,6 +517,12 @@ export default function PatientDirectory() {
             setIsTreatmentDrawerOpen(false);
             return;
         }
+
+        // Speculatively preload jaw templates for patient's dentition type (adult vs pediatric)
+        const pAge = selectedPatient.dob ? (new Date().getFullYear() - new Date(selectedPatient.dob).getFullYear()) : null;
+        const isPed = (pAge !== null && pAge < 6) || (selectedPatient.dentitionType || '').toLowerCase() === 'pediatric';
+        preloadPatientJawTemplates(isPed ? 'pediatric' : 'adult');
+
         fetchPatientChart(selectedPatient.patientID);
         setIsTreatmentDrawerOpen(false);
         
@@ -513,20 +567,71 @@ export default function PatientDirectory() {
         const docInfo = JSON.parse(stored);
         setDoctor(docInfo);
 
-        // Fetch patients
-        fetch(`http://localhost:5107/api/patients/doctor/${docInfo.doctorID}`)
-            .then(res => res.json())
-            .then(data => {
-                setPatients(data);
-                if (data.length > 0) setSelectedPatient(data[0]);
-            })
-            .catch(console.error);
+        let isCancelled = false;
+        setIsPageLoading(true);
+        setLoadProgress(20);
+        setLoadStatusMessage('Doctor authenticated. Requesting patient directory...');
 
-        // Fetch appointments for schedule logs
-        fetch(`http://localhost:5107/api/appointments?doctorId=${docInfo.doctorID}`)
-            .then(res => res.json())
-            .then(data => setAppointments(data))
-            .catch(console.error);
+        // Timeout guard: If network takes > 7s on slow connection, provide status & bypass
+        const slowTimer = setTimeout(() => {
+            if (!isCancelled) setIsSlowConnection(true);
+        }, 7000);
+
+        const fetchPatients = fetch(`/api/patients/doctor/${docInfo.doctorID}`)
+            .then(res => res.ok ? res.json() : [])
+            .then((data) => {
+                if (isCancelled) return [];
+                setPatients(data || []);
+                if (data && data.length > 0) {
+                    setSelectedPatient(prev => prev || data[0]);
+                    // Speculatively prefetch top patient chart & prescriptions for instant click-through
+                    const topP = data[0];
+                    prefetchApi(`patient_${topP.patientID}`, () => fetch(`/api/patients/${topP.patientID}`).then(r => r.json()));
+                    prefetchApi(`patient_${topP.patientID}_chart`, () => fetch(`/api/patients/${topP.patientID}/chart`).then(r => r.json()));
+                    prefetchApi(`patient_${topP.patientID}_prescriptions`, () => fetch(`/api/patients/${topP.patientID}/prescriptions`).then(r => r.json()));
+                }
+                setLoadProgress(prev => Math.max(prev, 60));
+                setLoadStatusMessage('Patient profiles loaded. Retrieving clinic schedule...');
+                return data;
+            }).catch(err => {
+                console.error("Patients load error:", err);
+                return [];
+            });
+
+        const fetchAppts = fetch(`/api/appointments?doctorId=${docInfo.doctorID}`)
+            .then(res => res.ok ? res.json() : [])
+            .then((data) => {
+                if (isCancelled) return [];
+                setAppointments(data || []);
+                setLoadProgress(prev => Math.max(prev, 85));
+                setLoadStatusMessage('Appointments synchronized. Finalizing clinic database...');
+                return data;
+            }).catch(err => {
+                console.error("Appointments load error:", err);
+                return [];
+            });
+
+        Promise.allSettled([fetchPatients, fetchAppts]).then(([pRes, aRes]) => {
+            if (isCancelled) return;
+            clearTimeout(slowTimer);
+            setLoadProgress(100);
+            setLoadStatusMessage('✓ Clinic Records 100% Ready — All Systems Synchronized');
+            
+            const isInstant = pRes?.status === 'fulfilled' && aRes?.status === 'fulfilled';
+            setTimeout(() => {
+                if (isCancelled) return;
+                setIsPageLoading(false);
+                setIsReadyBadgeVisible(true);
+                setTimeout(() => {
+                    if (!isCancelled) setIsReadyBadgeVisible(false);
+                }, 2800);
+            }, isInstant ? 150 : 350);
+        });
+
+        return () => {
+            isCancelled = true;
+            clearTimeout(slowTimer);
+        };
     }, [navigate]);
 
     useEffect(() => {
@@ -534,8 +639,11 @@ export default function PatientDirectory() {
             setClinicalLogs([]);
             return;
         }
+        // Defer clinical logs fetching: Only fetch if clinical logs drawer is actually open
+        if (!isLogsDrawerOpen) return;
+
         setLoadingLogs(true);
-        fetch(`http://localhost:5107/api/patients/${selectedPatient.patientID}/clinical-logs`)
+        fetch(`/api/patients/${selectedPatient.patientID}/clinical-logs`)
             .then(res => res.ok ? res.json() : [])
             .then(data => {
                 setClinicalLogs(Array.isArray(data) ? data : []);
@@ -545,9 +653,9 @@ export default function PatientDirectory() {
                 console.error("Clinical logs fetch failed:", err);
                 setLoadingLogs(false);
             });
-    }, [selectedPatient]);
+    }, [selectedPatient, isLogsDrawerOpen]);
 
-    const cleanSearch = searchTerm.trim().toLowerCase();
+    const cleanSearch = useMemo(() => searchTerm.trim().toLowerCase(), [searchTerm]);
 
     // Calculate age from date of birth
     const getAge = (dobString) => {
@@ -559,41 +667,76 @@ export default function PatientDirectory() {
         return Math.abs(ageDate.getUTCFullYear() - 1970);
     };
 
-    const filteredPatients = patients.filter(p => {
-        const matchesQuery = !cleanSearch || (
-            (p.firstName && p.firstName.toLowerCase().includes(cleanSearch)) || 
-            (p.lastName && p.lastName.toLowerCase().includes(cleanSearch)) || 
-            (`${p.firstName} ${p.lastName}`.toLowerCase().includes(cleanSearch)) ||
-            (p.patientID && p.patientID.toString().includes(cleanSearch.replace('#', ''))) ||
-            (p.phone && p.phone.includes(cleanSearch)) ||
-            (p.nhiNumber && p.nhiNumber.toLowerCase().includes(cleanSearch)) ||
-            (p.currentTreatmentPlan && p.currentTreatmentPlan.toLowerCase().includes(cleanSearch)) ||
-            (p.city && p.city.toLowerCase().includes(cleanSearch))
-        );
-        if (!matchesQuery) return false;
+    const getFilteredPatientsByTab = useCallback((tabId, searchStr = '') => {
+        const cSearch = (searchStr || '').trim().toLowerCase();
+        return patients.filter(p => {
+            const matchesQuery = !cSearch || (
+                (p.firstName && p.firstName.toLowerCase().includes(cSearch)) || 
+                (p.lastName && p.lastName.toLowerCase().includes(cSearch)) || 
+                (`${p.firstName} ${p.lastName}`.toLowerCase().includes(cSearch)) ||
+                (p.patientID && p.patientID.toString().includes(cSearch.replace('#', ''))) ||
+                (p.phone && p.phone.includes(cSearch)) ||
+                (p.nhiNumber && p.nhiNumber.toLowerCase().includes(cSearch)) ||
+                (p.currentTreatmentPlan && p.currentTreatmentPlan.toLowerCase().includes(cSearch)) ||
+                (p.city && p.city.toLowerCase().includes(cSearch))
+            );
+            if (!matchesQuery) return false;
 
-        const age = getAge(p.dob);
-        const pType = (p.dentitionType || '').toLowerCase();
-        if (dentitionFilter === 'PEDIATRIC') {
-            return (age !== null && age < 6) || pType === 'pediatric';
+            const age = getAge(p.dob);
+            const pType = (p.dentitionType || '').toLowerCase();
+            if (tabId === 'PEDIATRIC') {
+                return (age !== null && age < 6) || pType === 'pediatric';
+            }
+            if (tabId === 'MIXED') {
+                return (age !== null && age >= 6 && age <= 12) || pType === 'mixed';
+            }
+            if (tabId === 'ADULT') {
+                return (age !== null && age > 12) || pType === 'permanent' || (!p.dob && !p.dentitionType);
+            }
+            return true;
+        });
+    }, [patients]);
+
+    const filteredPatients = useMemo(() => {
+        return getFilteredPatientsByTab(dentitionFilter, cleanSearch);
+    }, [getFilteredPatientsByTab, dentitionFilter, cleanSearch]);
+
+    // Automatically select the top first patient whenever dentitionFilter tab changes
+    useEffect(() => {
+        if (!patients || patients.length === 0) return;
+        const topList = getFilteredPatientsByTab(dentitionFilter, cleanSearch);
+        if (topList.length > 0) {
+            setSelectedPatient(topList[0]);
+        } else {
+            setSelectedPatient(null);
         }
-        if (dentitionFilter === 'MIXED') {
-            return (age !== null && age >= 6 && age <= 12) || pType === 'mixed';
+    }, [dentitionFilter]);
+
+    // Automatically select the top matching patient when search term changes
+    useEffect(() => {
+        if (!patients || patients.length === 0) return;
+        if (!cleanSearch) return;
+        const topList = getFilteredPatientsByTab(dentitionFilter, cleanSearch);
+        if (topList.length > 0) {
+            const isCurrentInList = topList.some(p => p.patientID === selectedPatient?.patientID);
+            if (!isCurrentInList) {
+                setSelectedPatient(topList[0]);
+            }
+        } else {
+            setSelectedPatient(null);
         }
-        if (dentitionFilter === 'ADULT') {
-            return (age !== null && age > 12) || pType === 'permanent' || (!p.dob && !p.dentitionType);
-        }
-        return true;
-    });
+    }, [cleanSearch]);
 
     // Pagination Logic
     const indexOfLastPatient = currentPage * patientsPerPage;
     const indexOfFirstPatient = indexOfLastPatient - patientsPerPage;
-    const currentPatients = filteredPatients.slice(indexOfFirstPatient, indexOfLastPatient);
+    const currentPatients = useMemo(() => {
+        return filteredPatients.slice(indexOfFirstPatient, indexOfLastPatient);
+    }, [filteredPatients, indexOfFirstPatient, indexOfLastPatient]);
     const totalPages = Math.ceil(filteredPatients.length / patientsPerPage);
 
     // Helper: Search match across appointment properties
-    const matchesSearchAppt = (app) => {
+    const matchesSearchAppt = useCallback((app) => {
         if (!cleanSearch) return true;
         return (
             (app.fullName && app.fullName.toLowerCase().includes(cleanSearch)) ||
@@ -603,37 +746,67 @@ export default function PatientDirectory() {
             (app.appointmentID && app.appointmentID.toString().includes(cleanSearch.replace('#', ''))) ||
             (app.notes && app.notes.toLowerCase().includes(cleanSearch))
         );
-    };
+    }, [cleanSearch]);
 
-    // Filter appointments into old (completed/past) and new (upcoming: Pending & Confirmed only) - with live search
-    const now = new Date();
-    const newAppointments = appointments
-        .filter(app => new Date(app.preferredDate) >= now && (app.status === 'Pending' || app.status === 'Confirmed'))
-        .filter(matchesSearchAppt)
-        .sort((a, b) => new Date(b.preferredDate) - new Date(a.preferredDate) || b.appointmentID - a.appointmentID);
+    // Filter appointments into old (completed/past) and new (upcoming: Pending & Confirmed only) - with live search memoized
+    const newAppointments = useMemo(() => {
+        const now = new Date();
+        return appointments
+            .filter(app => new Date(app.preferredDate) >= now && (app.status === 'Pending' || app.status === 'Confirmed'))
+            .filter(matchesSearchAppt)
+            .sort((a, b) => new Date(a.preferredDate) - new Date(b.preferredDate) || a.appointmentID - b.appointmentID);
+    }, [appointments, matchesSearchAppt]);
 
-    const oldAppointments = appointments
-        .filter(app => new Date(app.preferredDate) < now && app.status !== 'Rejected' && app.status !== 'Cancelled')
-        .filter(matchesSearchAppt)
-        .sort((a, b) => new Date(b.preferredDate) - new Date(a.preferredDate) || b.appointmentID - a.appointmentID);
+    const oldAppointments = useMemo(() => {
+        const now = new Date();
+        return appointments
+            .filter(app => new Date(app.preferredDate) < now && app.status !== 'Rejected' && app.status !== 'Cancelled')
+            .filter(matchesSearchAppt)
+            .sort((a, b) => new Date(b.preferredDate) - new Date(a.preferredDate) || b.appointmentID - a.appointmentID);
+    }, [appointments, matchesSearchAppt]);
 
     // Paginate upcoming appointments (5 per page)
     const indexOfLastUpcoming = upcomingPage * upcomingPerPage;
     const indexOfFirstUpcoming = indexOfLastUpcoming - upcomingPerPage;
-    const currentUpcoming = newAppointments.slice(indexOfFirstUpcoming, indexOfLastUpcoming);
+    const currentUpcoming = useMemo(() => {
+        return newAppointments.slice(indexOfFirstUpcoming, indexOfLastUpcoming);
+    }, [newAppointments, indexOfFirstUpcoming, indexOfLastUpcoming]);
     const totalUpcomingPages = Math.ceil(newAppointments.length / upcomingPerPage);
 
     // Paginate past sessions (5 per page)
     const indexOfLastPast = pastPage * pastPerPage;
     const indexOfFirstPast = indexOfLastPast - pastPerPage;
-    const currentPast = oldAppointments.slice(indexOfFirstPast, indexOfLastPast);
+    const currentPast = useMemo(() => {
+        return oldAppointments.slice(indexOfFirstPast, indexOfLastPast);
+    }, [oldAppointments, indexOfFirstPast, indexOfLastPast]);
     const totalPastPages = Math.ceil(oldAppointments.length / pastPerPage);
 
-    if (!doctor) return null;
+    // 🌟 100% CLINICAL FULL-PAGE SKELETON LOADING (NO BACKEND BLUR - SKELETON COVERS ALL) 🌟
+    if (isPageLoading) {
+        return (
+            <FullPageSkeletonLoader 
+                variant="directory"
+                title="Getting your patient directory ready."
+                subtitle="Syncing patient records, medical history, and clinical appointments."
+                progress={loadProgress}
+                status={loadStatusMessage}
+                slowConnection={isSlowConnection}
+                onContinueAnyway={() => setIsPageLoading(false)}
+            />
+        );
+    }
 
     return (
         <div className="min-h-screen bg-[#F4F6FA] text-dark-slate flex flex-col font-sans selection:bg-light-teal selection:text-primary-teal relative overflow-x-hidden">
             <Navigation />
+
+            {/* 🌟 100% READY FLOATING CONFIRMATION BADGE 🌟 */}
+            {isReadyBadgeVisible && (
+                <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[100] bg-emerald-600 text-white px-5 py-2 rounded-full shadow-xl flex items-center gap-2 text-xs font-bold animate-fade-in border border-emerald-400/40">
+                    <CheckCircle2 className="w-4 h-4 text-white" />
+                    <span>Clinic Directory 100% Ready — All Records Synchronized</span>
+                </div>
+            )}
 
             {/* Main Dashboard Layout matching reference image */}
             <main className="flex-grow max-w-[1800px] w-full mx-auto px-4 py-8 space-y-6">
@@ -642,11 +815,11 @@ export default function PatientDirectory() {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div className="space-y-1">
                         <h2 className="text-2xl font-bold tracking-tight text-dark-slate flex items-center gap-1.5">
-                            Good Morning <span className="text-[#4A7CD2]">Dr. {doctor.lastName} 👋</span>
+                            Good Morning <span className="text-[#4A7CD2]">Dr. {doctor?.lastName || 'Doctor'} 👋</span>
                         </h2>
                     </div>
                     <div className="relative w-full sm:w-80">
-                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#93A0AF]" />
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                         <input 
                             type="text" 
                             placeholder="Find Patients or Appointments..." 
@@ -833,6 +1006,12 @@ export default function PatientDirectory() {
                                                 onClick={() => {
                                                     setDentitionFilter(tab.id);
                                                     setCurrentPage(1);
+                                                    const tabList = getFilteredPatientsByTab(tab.id, cleanSearch);
+                                                    if (tabList.length > 0) {
+                                                        setSelectedPatient(tabList[0]);
+                                                    } else {
+                                                        setSelectedPatient(null);
+                                                    }
                                                 }}
                                                 className={`flex-1 py-1 rounded-lg text-[9.5px] font-black transition-all cursor-pointer text-center ${
                                                     dentitionFilter === tab.id
@@ -865,6 +1044,12 @@ export default function PatientDirectory() {
                                                     <div 
                                                         key={p.patientID}
                                                         onClick={() => setSelectedPatient(p)}
+                                                        onPointerEnter={() => {
+                                                            preloadPatientJawTemplates(isPed ? 'pediatric' : 'adult');
+                                                            prefetchApi(`patient_${p.patientID}`, () => fetch(`/api/patients/${p.patientID}`).then(r => r.json()));
+                                                            prefetchApi(`patient_${p.patientID}_chart`, () => fetch(`/api/patients/${p.patientID}/chart`).then(r => r.json()));
+                                                            prefetchApi(`patient_${p.patientID}_prescriptions`, () => fetch(`/api/patients/${p.patientID}/prescriptions`).then(r => r.json()));
+                                                        }}
                                                         className={`p-3.5 rounded-2xl border cursor-pointer transition-all flex justify-between items-center ${isSelected ? 'bg-[#EAF0FC] border-[#4A7CD2] shadow-sm scale-[1.01]' : 'bg-white border-[#EAF0FC] hover:bg-light-teal/10'}`}
                                                     >
                                                         <div className="flex items-center gap-3">
@@ -1075,7 +1260,7 @@ export default function PatientDirectory() {
                                                              type="button"
                                                              onClick={handleResetTreatmentPlanInDB}
                                                              disabled={savingTreatment}
-                                                             className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-200 cursor-pointer transition-all disabled:opacity-50"
+                                                             className="p-1 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-200 cursor-pointer transition-all disabled:opacity-50"
                                                              title="Reset and clear this treatment plan from database"
                                                          >
                                                              <RotateCcw className="w-3 h-3" />
@@ -1150,7 +1335,7 @@ export default function PatientDirectory() {
                                                              try {
                                                                  const docId = doctor?.doctorID || 1;
                                                                  // 1. Update treatment plan in Patients table
-                                                                 await fetch(`http://localhost:5107/api/patients/${selectedPatient.patientID}/treatment-plan`, {
+                                                                 await fetch(`/api/patients/${selectedPatient.patientID}/treatment-plan`, {
                                                                      method: 'POST',
                                                                      headers: { 'Content-Type': 'application/json' },
                                                                      body: JSON.stringify({
@@ -1160,7 +1345,7 @@ export default function PatientDirectory() {
                                                                      })
                                                                  });
                                                                  // 2. Insert clinical log entry
-                                                                 await fetch(`http://localhost:5107/api/patients/${selectedPatient.patientID}/clinical-logs`, {
+                                                                 await fetch(`/api/patients/${selectedPatient.patientID}/clinical-logs`, {
                                                                      method: 'POST',
                                                                      headers: { 'Content-Type': 'application/json' },
                                                                      body: JSON.stringify({
@@ -1271,7 +1456,7 @@ export default function PatientDirectory() {
                                                              try {
                                                                  const docId = doctor?.doctorID || 1;
                                                                  // 1. Update treatment plan in Patients table
-                                                                 await fetch(`http://localhost:5107/api/patients/${selectedPatient.patientID}/treatment-plan`, {
+                                                                 await fetch(`/api/patients/${selectedPatient.patientID}/treatment-plan`, {
                                                                      method: 'POST',
                                                                      headers: { 'Content-Type': 'application/json' },
                                                                      body: JSON.stringify({
@@ -1281,7 +1466,7 @@ export default function PatientDirectory() {
                                                                      })
                                                                  });
                                                                  // 2. Insert clinical log entry
-                                                                 await fetch(`http://localhost:5107/api/patients/${selectedPatient.patientID}/clinical-logs`, {
+                                                                 await fetch(`/api/patients/${selectedPatient.patientID}/clinical-logs`, {
                                                                      method: 'POST',
                                                                      headers: { 'Content-Type': 'application/json' },
                                                                      body: JSON.stringify({
@@ -1390,7 +1575,7 @@ export default function PatientDirectory() {
                                                                  try {
                                                                      const docId = doctor?.doctorID || 1;
                                                                      // 1. Mark tooth as Damaged / Decay in TeethState (bulk update endpoint)
-                                                                     await fetch('http://localhost:5107/api/patients/teeth/update-bulk', {
+                                                                     await fetch('/api/patients/teeth/update-bulk', {
                                                                          method: 'POST',
                                                                          headers: { 'Content-Type': 'application/json' },
                                                                          body: JSON.stringify({
@@ -1404,7 +1589,7 @@ export default function PatientDirectory() {
                                                                          })
                                                                      });
                                                                      // 2. Insert clinical log entry
-                                                                     await fetch(`http://localhost:5107/api/patients/${selectedPatient.patientID}/clinical-logs`, {
+                                                                     await fetch(`/api/patients/${selectedPatient.patientID}/clinical-logs`, {
                                                                          method: 'POST',
                                                                          headers: { 'Content-Type': 'application/json' },
                                                                          body: JSON.stringify({
@@ -1518,10 +1703,10 @@ export default function PatientDirectory() {
                                                      <div className="space-y-1">
                                                          <div className="flex justify-between items-center text-[10px] font-black text-dark-slate uppercase tracking-wider">
                                                              <span>Missing</span>
-                                                             <span className="text-[#94A3B8] font-black">{missingPct}%</span>
+                                                             <span className="text-[#64748B] font-black">{missingPct}%</span>
                                                          </div>
                                                          <div className="w-full bg-[#EAF0FC] h-2 rounded-full overflow-hidden">
-                                                             <div className="bg-[#94A3B8] h-full rounded-full" style={{ width: `${missingPct}%` }}></div>
+                                                             <div className="bg-[#64748B] h-full rounded-full" style={{ width: `${missingPct}%` }}></div>
                                                          </div>
                                                      </div>
                                                  </div>
@@ -1539,12 +1724,31 @@ export default function PatientDirectory() {
                                                  </div>
                                              </div>
 
-                                             <button 
-                                                 onClick={() => navigate(`/chart/${selectedPatient.patientID}${activeTreatmentTag ? `?treatment=${activeTreatmentTag}` : ''}`)}
-                                                 className="w-full bg-[#4A7CD2] hover:bg-[#3665B7] text-white py-2.5 rounded-xl text-xs font-bold shadow-md transition-all mt-4 cursor-pointer flex items-center justify-center gap-1.5"
-                                             >
-                                                 View Odontogram Chart
-                                             </button>
+                                             <div className="flex flex-col gap-2 mt-4">
+                                                 <button 
+                                                     onClick={() => navigate(`/chart/${selectedPatient.patientID}${activeTreatmentTag ? `?treatment=${activeTreatmentTag}` : ''}`)}
+                                                     onPointerEnter={() => {
+                                                         preloadJawImages({ immediate: true });
+                                                         if (selectedPatient?.patientID) {
+                                                             prefetchApi(`patient_${selectedPatient.patientID}`, () => fetch(`/api/patients/${selectedPatient.patientID}`).then(r => r.json()));
+                                                             prefetchApi(`patient_${selectedPatient.patientID}_chart`, () => fetch(`/api/patients/${selectedPatient.patientID}/chart`).then(r => r.json()));
+                                                             prefetchApi(`patient_${selectedPatient.patientID}_prescriptions`, () => fetch(`/api/patients/${selectedPatient.patientID}/prescriptions`).then(r => r.json()));
+                                                             prefetchApi(`patient_${selectedPatient.patientID}_diagnostic`, () => fetch(`/api/patients/${selectedPatient.patientID}/diagnostic-assessment`).then(r => r.ok && r.status !== 204 ? r.json() : null));
+                                                         }
+                                                     }}
+                                                     className="w-full bg-[#4A7CD2] hover:bg-[#3665B7] text-white py-2.5 rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                                                 >
+                                                     <Stethoscope className="w-3.5 h-3.5" />
+                                                     View Odontogram Chart
+                                                 </button>
+                                                 <button 
+                                                     onClick={() => navigate(`/chart/${selectedPatient.patientID}?tab=billing`)}
+                                                     className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300/80 py-2 rounded-xl text-xs font-bold shadow-2xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                                                 >
+                                                     <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
+                                                     Treatment Plans & Invoices
+                                                 </button>
+                                             </div>
                                          </div>
                                      );
                                  })() : (
@@ -1808,7 +2012,7 @@ export default function PatientDirectory() {
                                 if (filtered.length === 0) {
                                     return (
                                         <div className="text-center py-16 space-y-2">
-                                            <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
+                                            <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto text-slate-500">
                                                 <FileText className="w-6 h-6" />
                                             </div>
                                             <p className="text-xs font-bold text-dark-slate">No Clinical Logs Found</p>
@@ -1884,13 +2088,13 @@ export default function PatientDirectory() {
                                 </div>
                                 <div>
                                     <h3 className="text-base font-bold text-slate-900">Edit Patient Information</h3>
-                                    <span className="text-[10px] text-slate-400 font-bold">Patient ID: #{editPatientModal.patient?.patientID}</span>
+                                    <span className="text-[10px] text-slate-500 font-bold">Patient ID: #{editPatientModal.patient?.patientID}</span>
                                 </div>
                             </div>
                             <button
                                 type="button"
                                 onClick={() => setEditPatientModal({ visible: false, patient: null })}
-                                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                                className="p-1.5 text-slate-500 hover:text-slate-800 rounded-lg cursor-pointer"
                             >
                                 <X className="w-4 h-4" />
                             </button>
@@ -2046,11 +2250,35 @@ export default function PatientDirectory() {
                 </div>
             )}
 
-            {/* Floating Toast Notification */}
+            {/* Floating Toast Notification (Top Right Corner - UI/UX Optimized) */}
             {toast.visible && (
-                <div className="fixed bottom-6 right-6 z-50 animate-bounce-in flex items-center gap-2.5 bg-[#10244B] text-white px-4 py-3 rounded-2xl shadow-2xl border border-light-teal/30">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                    <span className="text-xs font-bold font-sans">{toast.message}</span>
+                <div 
+                    role="status"
+                    aria-live="polite"
+                    className={`fixed top-24 right-6 sm:right-8 z-[100] animate-bounce-in flex items-center gap-3 bg-[#10244B]/95 backdrop-blur-md text-white pl-4 pr-3 py-3 rounded-2xl shadow-[0_20px_50px_rgba(16,36,75,0.35)] border ${
+                        toast.type === 'error' 
+                            ? 'border-rose-500/50 text-rose-100 ring-1 ring-rose-500/30' 
+                            : toast.type === 'info'
+                            ? 'border-cyan-400/50 text-cyan-100 ring-1 ring-cyan-400/30'
+                            : 'border-emerald-500/50 text-emerald-50 ring-1 ring-emerald-500/30'
+                    }`}
+                >
+                    {toast.type === 'error' ? (
+                        <ShieldAlert className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                    ) : toast.type === 'info' ? (
+                        <Sparkles className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+                    ) : (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                    )}
+                    <span className="text-xs font-bold font-sans tracking-wide">{toast.message}</span>
+                    <button 
+                        type="button"
+                        onClick={() => setToast({ visible: false, message: '', type: 'success' })}
+                        className="ml-1 text-white/50 hover:text-white transition-colors p-1 rounded-full hover:bg-white/10"
+                        title="Dismiss notification"
+                    >
+                        <X className="w-3.5 h-3.5" />
+                    </button>
                 </div>
             )}
 

@@ -124,4 +124,33 @@ namespace DentistAPI.Models
         public DentalNote DraftNote { get; set; } = new();
         public System.Collections.Generic.List<VoiceToothUpdate> TeethUpdates { get; set; } = new();
     }
+
+    public class RadiographNoteRequest
+    {
+        public long PatientId { get; set; }
+        public long DentistId { get; set; }
+        public int? RadiographId { get; set; }
+        public string ImageName { get; set; } = string.Empty;
+        public string Modality { get; set; } = "Radiograph";
+        public string Summary { get; set; } = string.Empty;
+        public string? ChiefComplaint { get; set; }
+        public string? Examination { get; set; }
+        public string? Assessment { get; set; }
+        public string? TreatmentPerformed { get; set; }
+        public string? PostOpAdvice { get; set; }
+        public string? FollowUp { get; set; }
+        public List<ToothFindingPayload>? Findings { get; set; } = new();
+    }
+
+    public class ToothFindingPayload
+    {
+        public int ToothNumber { get; set; }
+        public string Condition { get; set; } = string.Empty;
+        public string? Severity { get; set; }
+        public int? Confidence { get; set; }
+        public string? CdtCode { get; set; }
+        public string? Procedure { get; set; }
+        public string? Color { get; set; }
+        public string? Surface { get; set; }
+    }
 }

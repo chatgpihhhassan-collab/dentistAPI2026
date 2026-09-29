@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Edit3, Sparkles, CheckCircle2, Layers, Tag } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Edit3, Sparkles, CheckCircle2, Layers, Tag, Plus, ExternalLink } from 'lucide-react';
 import { getHexColor } from '../../utils/toothDataConstants';
+import { getCustomProcedures, subscribeToCustomProcedures } from '../../services/customProceduresService';
 
 export const CLINICAL_PRESET_CATEGORIES = [
   {
@@ -10,9 +11,12 @@ export const CLINICAL_PRESET_CATEGORIES = [
     icon: '🔴',
     presets: [
       { id: 'Healthy', label: 'Healthy Enamel', color: '#10B981', cdt: 'D0120', icon: '🟢' },
-      { id: 'Caries — O', label: 'Caries (Occlusal)', color: '#EF4444', cdt: 'D2140', icon: '🔴' },
+      { id: 'Caries — O', label: 'Caries (Occlusal Fissure)', color: '#EF4444', cdt: 'D2140', icon: '🔴' },
+      { id: 'Caries — MO', label: 'Caries (Mesio-Occlusal)', color: '#EF4444', cdt: 'D2150', icon: '🔴' },
       { id: 'Caries — DO', label: 'Caries (Disto-Occlusal)', color: '#EF4444', cdt: 'D2150', icon: '🔴' },
-      { id: 'Caries — MOD', label: 'Caries (MOD)', color: '#EF4444', cdt: 'D2160', icon: '🔴' },
+      { id: 'Caries — MOD', label: 'Caries (MOD Cavitation)', color: '#EF4444', cdt: 'D2160', icon: '🔴' },
+      { id: 'Caries — Class V', label: 'Caries (Cervical / Class V)', color: '#EF4444', cdt: 'D2140', icon: '🔴' },
+      { id: 'Caries — Lingual Pit (L)', label: 'Caries (Lingual Pit)', color: '#EF4444', cdt: 'D2140', icon: '🔴' },
       { id: 'Dentin Hypersensitivity', label: 'Sensitivity (No Cavity)', color: '#06B6D4', cdt: 'D9910', icon: '❄️' }
     ]
   },
@@ -59,6 +63,7 @@ export const CLINICAL_PRESET_CATEGORIES = [
     shortName: 'Periodontics',
     icon: '⚠️',
     presets: [
+      { id: 'Cleaning Needed', label: 'Cleaning & Scaling Needed', color: '#3B82F6', cdt: 'D1110', icon: '✨' },
       { id: 'Gum Recession', label: 'Gingival Recession', color: '#E0665A', cdt: 'D4341', icon: '🔴' },
       { id: 'Periodontal Bone Loss', label: 'Bone Loss (Furcation)', color: '#E0665A', cdt: 'D4341', icon: '⚠️' },
       { id: 'Pathologic Tooth Mobility', label: 'Tooth Mobility (I-III)', color: '#F43F5E', cdt: 'D4342', icon: '〰️' },
@@ -167,10 +172,20 @@ export const PRESET_CLINICAL_DESCRIPTIONS = {
     meaning: 'Dentition is structurally intact with no detectable caries, pulpal inflammation, or periodontal pockets.',
     clinicalTip: 'Routine preventive prophylaxis and oral hygiene maintenance recommended.'
   },
+  'Cleaning Needed': {
+    title: 'Dental Prophylaxis & Ultrasonic Scaling Needed',
+    meaning: 'Supragingival and subgingival calculus deposits, plaque biofilm, and extrinsic staining requiring comprehensive dental prophylaxis or scaling (CDT D1110 / D4346).',
+    clinicalTip: 'Perform ultrasonic scaling followed by fine-grit paste polishing and subgingival chlorhexidine irrigation.'
+  },
   'Caries — O': {
     title: 'Occlusal Pit & Fissure Caries (Class I)',
     meaning: 'Active demineralization restricted to the occlusal groove system without proximal involvement.',
     clinicalTip: 'Recommended: conservative resin restoration or pit and fissure sealing.'
+  },
+  'Caries — MO': {
+    title: 'Mesio-Occlusal Caries (Class II)',
+    meaning: 'Interproximal caries lesion involving the mesial contact surface and occlusal marginal ridge.',
+    clinicalTip: 'Requires sectional matrix band composite (CDT D2392) or amalgam restoration.'
   },
   'Caries — DO': {
     title: 'Disto-Occlusal Caries (Class II)',
@@ -181,6 +196,16 @@ export const PRESET_CLINICAL_DESCRIPTIONS = {
     title: 'Mesio-Occlusal-Distal Multi-Surface Caries (Class II)',
     meaning: 'Extensive proximal caries involvement across both mesial and distal contact zones.',
     clinicalTip: 'Evaluate remaining cuspal thickness for full-coverage crown protection.'
+  },
+  'Caries — Class V': {
+    title: 'Cervical / Class V Carious Demineralization',
+    meaning: 'Carious or demineralized lesion along the gingival third margin of the buccal/facial cervical enamel.',
+    clinicalTip: 'Gingival retraction cord and subgingival composite or Glass Ionomer (GIC) recommended.'
+  },
+  'Caries — Lingual Pit (L)': {
+    title: 'Lingual Pit / Cingulum Developmental Caries (Class I)',
+    meaning: 'Focal carious lesion in the lingual/palatal developmental pit of anterior teeth or molars.',
+    clinicalTip: 'Conservative Class I composite restoration preserving sound facial enamel.'
   },
   'Dentin Hypersensitivity': {
     title: 'Dentin Hypersensitivity (Non-Carious)',
@@ -387,8 +412,46 @@ export default function ToothQuickPresetSelector({
   handleSaveObservation,
   setActivePaletteItem
 }) {
-  const targetCategories = isPediatric ? PEDIATRIC_CLINICAL_PRESET_CATEGORIES : CLINICAL_PRESET_CATEGORIES;
-  const allPresets = isPediatric ? ALL_PEDIATRIC_PRESETS : ALL_33_CLINICAL_PRESETS;
+  const [customProcedures, setCustomProcedures] = useState(() => getCustomProcedures());
+
+  useEffect(() => {
+    const unsubscribe = subscribeToCustomProcedures((updated) => {
+      setCustomProcedures(updated);
+    });
+    return unsubscribe;
+  }, []);
+
+  const customPresets = useMemo(() => {
+    return customProcedures.map(p => ({
+      id: p.procedureName,
+      label: p.procedureName,
+      color: p.color || '#8B5CF6',
+      cdt: p.procedureCode || 'CUST',
+      icon: '✨',
+      isCustom: true,
+      standardFee: p.standardFee,
+      currency: p.currency || 'PKR',
+      estimatedDuration: p.estimatedDuration || '45 mins',
+      description: p.description
+    }));
+  }, [customProcedures]);
+
+  const targetCategories = useMemo(() => {
+    const base = isPediatric ? PEDIATRIC_CLINICAL_PRESET_CATEGORIES : CLINICAL_PRESET_CATEGORIES;
+    const customCat = {
+      id: 'custom_clinic',
+      name: `Custom Clinic Procedures (${customPresets.length})`,
+      shortName: 'Custom Clinic',
+      icon: '✨',
+      presets: customPresets
+    };
+    return [...base, customCat];
+  }, [isPediatric, customPresets]);
+
+  const allPresets = useMemo(() => {
+    const base = isPediatric ? ALL_PEDIATRIC_PRESETS : ALL_33_CLINICAL_PRESETS;
+    return [...base, ...customPresets];
+  }, [isPediatric, customPresets]);
 
   const [activeCategoryId, setActiveCategoryId] = useState(isPediatric ? 'p_restorative' : 'pathology');
 
@@ -407,6 +470,10 @@ export default function ToothQuickPresetSelector({
       return (s === 'healthy' || s === 'sound' || s.includes('intact primary')) && 
              !fullText.includes('caries') && 
              !fullText.includes('decay') && 
+             !fullText.includes('clean') && 
+             !fullText.includes('scaling') && 
+             !fullText.includes('calculus') && 
+             !fullText.includes('tartar') && 
              !fullText.includes('rct') && 
              !fullText.includes('crown') && 
              !fullText.includes('bone loss') && 
@@ -416,6 +483,10 @@ export default function ToothQuickPresetSelector({
              !fullText.includes('missing') &&
              !fullText.includes('extracted') &&
              !fullText.includes('space maintainer');
+    }
+
+    if (cid === 'Cleaning Needed') {
+      return fullText.includes('clean') || fullText.includes('scaling') || fullText.includes('calculus') || fullText.includes('tartar') || fullText.includes('prophylaxis');
     }
 
     // Pediatric Specific Conditions
@@ -541,8 +612,15 @@ export default function ToothQuickPresetSelector({
     if (cid.includes('Caries')) {
       if (cid.includes('MOD')) return /\bmod\b|mesio-occlusal-distal/i.test(fullText);
       if (cid.includes('DO')) return (/\bdo\b(?!ctor)/i.test(fullText) && !/\bdoctor\b|\bdob\b/i.test(fullText.replace(/\bdo\b/gi, ''))) || fullText.includes('disto-occlusal');
-      if (cid.includes('O')) return (/\b(o)\b|— o\b|occlusal/i.test(fullText) && !/\bmod\b|\bdo\b|\bmo\b/i.test(fullText));
+      if (cid.includes('MO')) return (/\bmo\b/i.test(fullText) && !/\bmolar\b|\bmobility\b/i.test(fullText.replace(/\bmo\b/gi, '')) && !/\bmod\b/i.test(fullText)) || fullText.includes('mesio-occlusal');
+      if (cid.includes('Class V')) return fullText.includes('class v') || fullText.includes('cervical');
+      if (cid.includes('Lingual Pit')) return fullText.includes('lingual pit') || fullText.includes('palatal pit');
+      if (cid.includes('O')) return (/\b(o)\b|— o\b|occlusal/i.test(fullText) && !/\bmod\b|\bdo\b|\bmo\b/i.test(fullText) && !fullText.includes('class v') && !fullText.includes('lingual pit'));
       return fullText.includes('caries') || fullText.includes('decay') || fullText.includes('cavity');
+    }
+
+    if (cid.startsWith('Custom') || customPresets.some(cp => cp.id === cid)) {
+      return toothData?.status === cid || (toothData?.comments && toothData.comments.includes(cid));
     }
 
     return false;
@@ -565,7 +643,7 @@ export default function ToothQuickPresetSelector({
     if (matchingCat) {
       setActiveCategoryId(matchingCat.id);
     }
-  }, [toothData?.status, toothData?.comments, isPediatric]);
+  }, [toothData?.status, toothData?.comments, isPediatric, targetCategories]);
 
   const activeDetail = PRESET_CLINICAL_DESCRIPTIONS[activePreset?.id] || {
     title: activePreset?.label || activePreset?.id || 'Active Clinical Observation',
@@ -576,6 +654,21 @@ export default function ToothQuickPresetSelector({
   const handleApplyPreset = (cond) => {
     let matchingPalette = 'Healthy';
     const cid = cond.id;
+
+    if (cond.isCustom) {
+      if (setActivePaletteItem) {
+        setActivePaletteItem('Composite Filling');
+      }
+      if (handleSaveObservation) {
+        handleSaveObservation(
+          cond.id,
+          `Clinical custom procedure: ${cond.label} (${cond.cdt}) - Fee: ${cond.currency || 'PKR'} ${Number(cond.standardFee || 0).toLocaleString()} recorded on ${isPediatric ? `Primary Tooth ${tKey}` : `Tooth #${tNum}`}`,
+          cond.color || '#8B5CF6'
+        );
+      }
+      return;
+    }
+
     if (cid.includes('Healthy')) matchingPalette = 'Healthy';
     else if (cid.includes('Space Maintainer')) matchingPalette = 'Space Maintainer';
     else if (cid.includes('Stainless Steel') || cid.includes('SSC')) matchingPalette = 'Stainless Steel Crown (SSC)';
@@ -621,7 +714,7 @@ export default function ToothQuickPresetSelector({
             <p className="text-[10.5px] font-bold text-muted-text mt-0.5">
               {isPediatric
                 ? '21 Verified Pediatric Presets across 5 Specialties (AAPD Standard)'
-                : '33 Verified Clinical Presets across 7 Specialties'}
+                : `${33 + customPresets.length} Verified Clinical & Custom Presets across ${targetCategories.length} Categories`}
             </p>
           </div>
         </div>
@@ -649,6 +742,7 @@ export default function ToothQuickPresetSelector({
         <div className="flex flex-wrap gap-1.5 p-2 bg-[#F8FAFC] rounded-2xl border border-slate-200">
           {targetCategories.map(cat => {
             const isCatActive = activeCategoryId === cat.id;
+            const isCustomCat = cat.id === 'custom_clinic';
             const hasActivePreset = cat.presets.some(p => isPresetSelected(p.id));
 
             return (
@@ -658,8 +752,12 @@ export default function ToothQuickPresetSelector({
                 onClick={() => setActiveCategoryId(cat.id)}
                 className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 border shadow-2xs ${
                   isCatActive
-                    ? 'bg-[#10244B] text-white border-[#10244B] shadow-sm font-black ring-2 ring-blue-500/20 scale-[1.02]'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-[#EFF6FF] hover:border-blue-200 hover:text-blue-900'
+                    ? isCustomCat
+                      ? 'bg-gradient-to-r from-purple-700 to-indigo-700 text-white border-purple-800 shadow-sm font-black ring-2 ring-purple-500/30 scale-[1.02]'
+                      : 'bg-[#10244B] text-white border-[#10244B] shadow-sm font-black ring-2 ring-blue-500/20 scale-[1.02]'
+                    : isCustomCat
+                      ? 'bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100 hover:border-purple-300'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-[#EFF6FF] hover:border-blue-200 hover:text-blue-900'
                 }`}
               >
                 <span>{cat.icon}</span>
@@ -690,15 +788,26 @@ export default function ToothQuickPresetSelector({
                 onClick={() => handleApplyPreset(cond)}
                 className={`p-3 rounded-2xl text-left border transition-all duration-150 cursor-pointer relative flex items-center justify-between gap-2.5 ${
                   isSelected
-                    ? 'bg-[#4A7CD2] text-white border-[#3B6DBE] shadow-md font-black ring-2 ring-[#4A7CD2]/40 scale-[1.01] z-10'
-                    : 'bg-white text-slate-800 border-slate-200 hover:bg-[#F0F7FF] hover:border-blue-300 shadow-2xs'
+                    ? cond.isCustom
+                      ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white border-purple-700 shadow-md font-black ring-2 ring-purple-400/40 scale-[1.01] z-10'
+                      : 'bg-[#4A7CD2] text-white border-[#3B6DBE] shadow-md font-black ring-2 ring-[#4A7CD2]/40 scale-[1.01] z-10'
+                    : cond.isCustom
+                      ? 'bg-purple-50/50 text-slate-800 border-purple-200 hover:bg-purple-100/70 hover:border-purple-300 shadow-2xs'
+                      : 'bg-white text-slate-800 border-slate-200 hover:bg-[#F0F7FF] hover:border-blue-300 shadow-2xs'
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <span className="text-base shrink-0">{cond.icon || '🦷'}</span>
-                  <span className={`text-xs font-bold leading-snug ${isSelected ? 'text-white font-black' : 'text-slate-900'}`}>
-                    {cond.label}
-                  </span>
+                  <div className="min-w-0">
+                    <span className={`text-xs font-bold leading-snug block truncate ${isSelected ? 'text-white font-black' : 'text-slate-900'}`}>
+                      {cond.label}
+                    </span>
+                    {cond.isCustom && (
+                      <span className={`text-[10px] font-bold block mt-0.5 ${isSelected ? 'text-purple-100' : 'text-emerald-700'}`}>
+                        {cond.currency || 'PKR'} {Number(cond.standardFee || 0).toLocaleString()} · {cond.estimatedDuration || '45 mins'}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="shrink-0 flex items-center">
@@ -707,7 +816,11 @@ export default function ToothQuickPresetSelector({
                       ACTIVE
                     </span>
                   ) : (
-                    <span className="text-[8.5px] font-extrabold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded-md border border-slate-200">
+                    <span className={`text-[8.5px] font-extrabold px-1.5 py-0.5 rounded-md border ${
+                      cond.isCustom 
+                        ? 'bg-purple-100 text-purple-800 border-purple-200' 
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}>
                       {cond.cdt}
                     </span>
                   )}
@@ -716,6 +829,24 @@ export default function ToothQuickPresetSelector({
             );
           })}
         </div>
+
+        {currentCategory.id === 'custom_clinic' && (
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+            <span className="text-slate-500 font-semibold">
+              Clinic proprietary procedures and custom treatment bundles.
+            </span>
+            <a
+              href="/doctor/treatment-pricing"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 font-bold text-purple-700 hover:text-purple-900 hover:underline"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Configure in Fee Schedule</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+        )}
       </div>
 
       {/* 4. Active Clinical Diagnosis Card (Bottom Summary) */}

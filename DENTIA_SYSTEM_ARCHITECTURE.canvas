@@ -1,0 +1,148 @@
+{
+  "nodes": [
+    {
+      "id": "hub-title",
+      "type": "text",
+      "text": "# 🦷 DENTIA CLINICAL SUITE\n### Master System Architecture & Domain Model\n\n- **Modern Full-Stack Dental EHR & AI Copilot**\n- **Vault:** [[00_DENTIA_OBSIDIAN_HUB|Master Index Hub]]\n- **Tech Stack:** React 19 + .NET 8 Web API + SQL Server",
+      "x": 420,
+      "y": 0,
+      "width": 460,
+      "height": 220,
+      "color": "1"
+    },
+    {
+      "id": "frontend-suite",
+      "type": "text",
+      "text": "## 🖥️ Dentia Web Application\n`React 19 + Vite + Vanilla CSS`\n\n- **Odontogram**: 32-tooth interactive jaw charting\n- **Doctor Voice Mic**: Real-time speech transcription\n- **Chatbot Copilot**: Natural language chart command parser\n- **Patient Directory & Hub**: 60 FPS search & filter\n- **Clinical Guidelines**: 135+ CDT verified protocols",
+      "x": 0,
+      "y": 300,
+      "width": 380,
+      "height": 270,
+      "color": "4"
+    },
+    {
+      "id": "backend-api",
+      "type": "text",
+      "text": "## ⚙️ Core Web API Service\n`ASP.NET Core 8 Web API (.NET 8)`\n\n- **Controllers**: Patients, Treatments, Billing, Chatbot\n- **Security**: IP Rate Limiting, Magic-Byte File Validation\n- **AI Vision Gateway**: Groq Vision & Gemini Bridge\n- **Export Engines**: PDF Patient Report Generator\n- **Hardware Worker**: Soredex Digora TCP Socket Listener",
+      "x": 460,
+      "y": 300,
+      "width": 380,
+      "height": 270,
+      "color": "5"
+    },
+    {
+      "id": "database-layer",
+      "type": "text",
+      "text": "## 🗄️ Relational Data Store\n`Microsoft SQL Server 2022`\n\n- `[dentist].[Patients]`: Demographic & Medical History\n- `[dentist].[Appointments]`: Scheduling & Status\n- `[dentist].[ClinicalNotes]`: Tooth Charts & AI Scribe\n- `[dentist].[Invoices]`: Itemized CDT Billing\n- `[Specialties]`: Implant, Biopsy, Aligner Cases",
+      "x": 920,
+      "y": 300,
+      "width": 380,
+      "height": 270,
+      "color": "3"
+    },
+    {
+      "id": "ai-scribe",
+      "type": "text",
+      "text": "## 🤖 AI Dental Scribe & Vision\n`Multimodal Diagnostic Engine`\n\n- **clinicalDentalBrain.js**: Client-side clinical NLP\n- **Groq Vision (LLaVA / Llama-3.2)**: Panoramic & Bitewing AI\n- **Gemini 2.5 Flash**: Diagnostic reasoning copilot\n- **SpeechSynthesis / Whisper**: Hands-free voice feedback",
+      "x": 0,
+      "y": 660,
+      "width": 380,
+      "height": 270,
+      "color": "6"
+    },
+    {
+      "id": "clinical-specialties",
+      "type": "text",
+      "text": "## 🩺 Clinical Specialties Suite\n`Advanced Surgical & Ortho Modules`\n\n- 🔩 **Implant Planning**: Dimensions, Brands, Bone D1-D4\n- 🔬 **Oral Biopsy**: Incisional/Excisional Requisitions\n- ✨ **Clear Aligners**: Staging, Wear Schedules, IPR\n- 🦷 **Ortho & TMJ**: Angle Class, Overjet, Crepitus",
+      "x": 460,
+      "y": 660,
+      "width": 380,
+      "height": 270,
+      "color": "2"
+    },
+    {
+      "id": "hardware-bridges",
+      "type": "text",
+      "text": "## 🔌 Hardware & Integrations\n`Clinic Devices & Cloud Sync`\n\n- **Soredex Digora Optime**: LAN Ethernet bridge\n- **Notion 2-Way Sync**: Calendar & Appointment DB\n- **Strix DAST Engine**: Autonomous security pentesting\n- **Anam AI Avatar**: Interactive consultation assistant",
+      "x": 920,
+      "y": 660,
+      "width": 380,
+      "height": 270,
+      "color": "1"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-hub-frontend",
+      "fromNode": "hub-title",
+      "fromSide": "bottom",
+      "toNode": "frontend-suite",
+      "toSide": "top",
+      "label": "User Interface"
+    },
+    {
+      "id": "edge-hub-backend",
+      "fromNode": "hub-title",
+      "fromSide": "bottom",
+      "toNode": "backend-api",
+      "toSide": "top",
+      "label": "Core Engine"
+    },
+    {
+      "id": "edge-hub-db",
+      "fromNode": "hub-title",
+      "fromSide": "bottom",
+      "toNode": "database-layer",
+      "toSide": "top",
+      "label": "Persistence"
+    },
+    {
+      "id": "edge-frontend-backend",
+      "fromNode": "frontend-suite",
+      "fromSide": "right",
+      "toNode": "backend-api",
+      "toSide": "left",
+      "label": "REST / JSON (Port 5084)"
+    },
+    {
+      "id": "edge-backend-db",
+      "fromNode": "backend-api",
+      "fromSide": "right",
+      "toNode": "database-layer",
+      "toSide": "left",
+      "label": "EF Core / SQL Server"
+    },
+    {
+      "id": "edge-frontend-ai",
+      "fromNode": "frontend-suite",
+      "fromSide": "bottom",
+      "toNode": "ai-scribe",
+      "toSide": "top",
+      "label": "Voice Mic & Chatbot"
+    },
+    {
+      "id": "edge-frontend-specialties",
+      "fromNode": "frontend-suite",
+      "fromSide": "bottom",
+      "toNode": "clinical-specialties",
+      "toSide": "top",
+      "label": "Specialty Modals & Prefill"
+    },
+    {
+      "id": "edge-backend-hardware",
+      "fromNode": "backend-api",
+      "fromSide": "bottom",
+      "toNode": "hardware-bridges",
+      "toSide": "top",
+      "label": "Socket / Webhooks"
+    },
+    {
+      "id": "edge-specialties-backend",
+      "fromNode": "clinical-specialties",
+      "fromSide": "top",
+      "toNode": "backend-api",
+      "toSide": "bottom",
+      "label": "CDT Procedures & Billing"
+    }
+  ]
+}

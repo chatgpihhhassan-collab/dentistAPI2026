@@ -109,6 +109,9 @@ export default function ThreeDentalJawArch({
     ? (isMaxilla ? THREE_PRIMARY_MAXILLA_SOCKETS : THREE_PRIMARY_MANDIBLE_SOCKETS)
     : (isMaxilla ? THREE_MAXILLA_SOCKETS : THREE_MANDIBLE_SOCKETS);
   const bgImage = isPediatric
+    ? (isMaxilla ? '/empty_pediatric_maxilla_jaw.webp' : '/empty_pediatric_mandible_jaw.webp')
+    : (isMaxilla ? '/empty_maxilla_jaw.webp' : '/empty_mandible_jaw.webp');
+  const fallbackBgImage = isPediatric
     ? (isMaxilla ? '/empty_pediatric_maxilla_jaw.jpg' : '/empty_pediatric_mandible_jaw.jpg')
     : (isMaxilla ? '/empty_maxilla_jaw.jpg' : '/empty_mandible_jaw.jpg');
   const jawTitle = isPediatric
@@ -116,6 +119,10 @@ export default function ThreeDentalJawArch({
     : (isMaxilla ? 'MAXILLA (UPPER JAW - 16 TEETH)' : 'MANDIBLE (LOWER JAW - 16 TEETH)');
 
   const [hoveredTooth, setHoveredTooth] = useState(null);
+  const highlightedTeethRef = useRef(highlightedTeeth);
+  useEffect(() => {
+    highlightedTeethRef.current = highlightedTeeth;
+  }, [highlightedTeeth]);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -166,12 +173,16 @@ export default function ThreeDentalJawArch({
           return tVal === toothNum || String(tVal).toUpperCase() === String(toothNum).toUpperCase();
         }
       );
-      const status = toothData?.status || toothData?.conditionStatus || 'Healthy';
+      const status = (toothData?.conditionStatus && toothData.conditionStatus !== 'Planned' && toothData.conditionStatus !== 'Healthy')
+        ? toothData.conditionStatus
+        : (toothData?.condition && toothData.condition !== 'Planned' && toothData.condition !== 'Healthy')
+        ? toothData.condition
+        : (toothData?.status && toothData.status !== 'Planned' ? toothData.status : toothData?.conditionStatus || toothData?.status || 'Healthy');
       const sLower = status.toLowerCase();
-      const isMissing = sLower.includes('miss') || sLower.includes('extract') || sLower.includes('absent') || sLower.includes('lost') || sLower.includes('exfoliat');
-      const isDecay = sLower.includes('decay') || sLower.includes('damag') || sLower === 'cavity' || sLower.includes('keera');
-      const isFilled = sLower.includes('treat') || sLower.includes('prosthesis') || sLower.includes('crown') || sLower.includes('bridge') || sLower.includes('filling') || sLower.includes('composite');
-      const isRCT = sLower.includes('canal') || sLower.includes('root') || sLower === 'yellow' || sLower.includes('pulp');
+      const isMissing = sLower.includes('miss') || sLower.includes('extract') || sLower.includes('absent') || sLower.includes('lost') || sLower.includes('exfoliat') || sLower.includes('edentul');
+      const isDecay = sLower.includes('decay') || sLower.includes('damag') || sLower === 'cavity' || sLower.includes('keera') || sLower.includes('caries');
+      const isFilled = sLower.includes('treat') || sLower.includes('prosthesis') || sLower.includes('crown') || sLower.includes('bridge') || sLower.includes('filling') || sLower.includes('composite') || sLower.includes('abutment');
+      const isRCT = sLower.includes('canal') || sLower.includes('root') || sLower === 'yellow' || sLower.includes('pulp') || sLower.includes('radiolucen') || sLower.includes('periapical') || sLower.includes('apical');
       const isHighlighted = highlightedTeeth.includes(toothNum) || highlightedTeeth.includes(String(toothNum));
 
       // If missing, socket remains empty!
@@ -214,17 +225,17 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
   const isComposite = full.includes('composite') || full.includes('resin') || (full.includes('fill') && !full.includes('amalgam') && !full.includes('gic')) || (full.includes('treated') && !full.includes('crown'));
   const isAmalgam = full.includes('amalgam') || full.includes('silver');
   const isGIC = full.includes('gic') || full.includes('glass ionomer');
-  const isCaries = full.includes('caries') || full.includes('decay') || full.includes('cavity') || full.includes('keera') || full.includes('damag');
+  const isCaries = full.includes('caries') || full.includes('decay') || full.includes('cavity') || full.includes('keera') || full.includes('damag') || full.includes('defective') || full.includes('margin');
   const isRCT = full.includes('canal') || full.includes('rct') || full.includes('pulpotomy') || full.includes('obturation');
   const isSealant = full.includes('sealant');
-  const isCrown = (full.includes('crown') || full.includes('bridge') || full.includes('prosthesis')) && !full.includes('implant');
+  const isCrown = (full.includes('crown') || full.includes('bridge') || full.includes('prosthesis') || full.includes('abutment')) && !full.includes('implant');
   const isImplant = full.includes('implant');
   const isVeneer = full.includes('veneer');
-  const isMobility = (full.includes('mobility') && !full.includes('grade 0') && !full.includes('physiological')) || (full.includes('bone loss') && !full.includes('no bone loss'));
+  const isMobility = (full.includes('mobility') && !full.includes('grade 0') && !full.includes('physiological')) || (full.includes('bone loss') && !full.includes('no bone loss')) || full.includes('periodont') || full.includes('furcation');
   const isRecession = full.includes('recession');
   const isFractured = full.includes('fractur') || full.includes('chipped') || full.includes('crack');
   const isOrthodontic = full.includes('orthodontic') || full.includes('bracket') || full.includes('braces') || full.includes('malocclusion') || full.includes('crowding') || full.includes('rotation') || full.includes('diastema');
-  const isAbscess = full.includes('abscess') || full.includes('lesion') || full.includes('periapical') || full.includes('pus') || full.includes('swelling');
+  const isAbscess = full.includes('abscess') || full.includes('lesion') || full.includes('periapical') || full.includes('radiolucen') || full.includes('pus') || full.includes('swelling') || full.includes('apical');
   const isInlay = full.includes('inlay') || full.includes('onlay');
   const isPostCore = full.includes('post and core') || full.includes('post & core') || full.includes('post build');
   const isImpacted = full.includes('impacted') || full.includes('impaction');
@@ -233,8 +244,9 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
   const isSpaceMaintainer = full.includes('space maintainer') || full.includes('band and loop') || full.includes('space');
   const isPulpotomy = full.includes('pulpotomy') || full.includes('mta');
   const isSSC = full.includes('ssc') || full.includes('stainless steel crown');
+  const isCleaning = full.includes('clean') || full.includes('scaling') || full.includes('calculus') || full.includes('tartar') || full.includes('plaque') || full.includes('prophylaxis');
 
-  if (!isComposite && !isAmalgam && !isGIC && !isCaries && !isRCT && !isSealant && !isCrown && !isImplant && !isVeneer && !isMobility && !isRecession && !isFractured && !isOrthodontic && !isAbscess && !isInlay && !isPostCore && !isImpacted && !isCyst && !isSensitivity && !isSpaceMaintainer && !isPulpotomy && !isSSC) {
+  if (!isComposite && !isAmalgam && !isGIC && !isCaries && !isRCT && !isSealant && !isCrown && !isImplant && !isVeneer && !isMobility && !isRecession && !isFractured && !isOrthodontic && !isAbscess && !isInlay && !isPostCore && !isImpacted && !isCyst && !isSensitivity && !isSpaceMaintainer && !isPulpotomy && !isSSC && !isCleaning) {
     return null;
   }
 
@@ -648,6 +660,50 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
     ctx.fill();
     ctx.stroke();
     ctx.restore();
+  } else if (isCleaning) {
+    // 23. PROPHYLAXIS / TEETH CLEANING NEEDED: Ultrasonic Hygiene Ring (#3B82F6) + Marginal Calculus Deposits
+    ctx.save();
+    // A. Outer Sapphire / Azure Prophylaxis Scaling Aura Ring
+    ctx.strokeStyle = '#3B82F6';
+    ctx.lineWidth = 6;
+    ctx.shadowColor = 'rgba(59, 130, 246, 0.85)';
+    ctx.shadowBlur = 10;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.arc(64, 64, 46, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+
+    // B. Inner Golden-Amber Marginal Calculus Deposits (#D97706 / #F59E0B)
+    const calcGrad = ctx.createRadialGradient(64, 64, 25, 64, 64, 44);
+    calcGrad.addColorStop(0, 'rgba(245, 158, 11, 0)');
+    calcGrad.addColorStop(0.65, 'rgba(217, 119, 6, 0.45)');
+    calcGrad.addColorStop(1, 'rgba(180, 83, 9, 0.85)');
+    ctx.fillStyle = calcGrad;
+    ctx.beginPath();
+    ctx.arc(64, 64, 44, 0, Math.PI * 2);
+    ctx.fill();
+
+    // C. Calculus Stipples / Micro-deposits
+    ctx.fillStyle = '#B45309';
+    for (let i = 0; i < 8; i++) {
+      const ang = (i * Math.PI) / 4;
+      const dotX = 64 + Math.cos(ang) * 38;
+      const dotY = 64 + Math.sin(ang) * 38;
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // D. Center Hygiene Clean Sparkle
+    ctx.strokeStyle = '#60A5FA';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(64, 58); ctx.lineTo(64, 70);
+    ctx.moveTo(58, 64); ctx.lineTo(70, 64);
+    ctx.stroke();
+    ctx.restore();
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -662,8 +718,25 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
       let toothColor = new THREE.Color(0xffffff);
       let opacity = 1.0;
 
+      const toothColorHex = (toothData?.color || toothData?.conditionColor || '').toLowerCase();
+      const isRedPathology = toothColorHex === '#dc2626' || toothColorHex === '#ef4444' || sLower.includes('severe') || sLower.includes('radiolucen') || sLower.includes('caries');
+      const isAmberPathology = toothColorHex === '#f59e0b' || toothColorHex === '#d97706' || sLower.includes('defective') || sLower.includes('bone loss');
+
+      const hasActiveSpotlight = Array.isArray(highlightedTeeth) && highlightedTeeth.length > 0;
       if (isHighlighted) {
-        toothColor = new THREE.Color(0x7dd3fc); // Glowing cyan highlight
+        opacity = 1.0;
+        toothColor = isRedPathology 
+          ? new THREE.Color(0xff8080) 
+          : isAmberPathology 
+          ? new THREE.Color(0xffe082) 
+          : new THREE.Color(0x4a7cd2); // Dentia Sapphire clinical spotlight
+      } else if (hasActiveSpotlight) {
+        opacity = 0.40; // Soft dimming of non-impacted teeth in spotlight mode
+        toothColor = new THREE.Color(0xc0c8d0);
+      } else if (isRedPathology) {
+        toothColor = new THREE.Color(0xffe4e6); // Soft rose warning tint for diagnosed severe pathology
+      } else if (isAmberPathology) {
+        toothColor = new THREE.Color(0xfef3c7); // Soft amber warning tint for moderate pathology
       } else if (isSpaceMaintainer) {
         toothColor = new THREE.Color(0xdbeafe); // Soft pediatric sky blue base
       } else if (isRotated) {
@@ -696,8 +769,8 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
           toothComments = `Pathology: Active caries enamel demineralization on Tooth #${toothNum}`;
         } else if (status.toLowerCase().includes('canal') || status.toLowerCase().includes('rct')) {
           toothComments = `Endodontics: Root canal therapy and obturation on Tooth #${toothNum}`;
-        } else if (status.toLowerCase().includes('mobility')) {
-          toothComments = `Periodontal: Pathologic tooth mobility on Tooth #${toothNum}`;
+        } else if (status.toLowerCase().includes('mobility') || status.toLowerCase().includes('bone loss')) {
+          toothComments = `Periodontal: Pathologic bone loss & mobility on Tooth #${toothNum}`;
         } else if (status.toLowerCase().includes('rotat')) {
           toothComments = `Developmental: ${clinicalRotOffset || 45}° axial rotation diagnosed on odontogram`;
         } else {
@@ -734,6 +807,21 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
         ringMesh.position.set(0, 0, 0.08);
         ringMesh.renderOrder = 6;
         toothMesh.add(ringMesh);
+      }
+
+      // Clinical Pathology 3D Warning Aura Ring for diagnosed teeth
+      if ((isRedPathology || isAmberPathology) && !isSpaceMaintainer) {
+        const pathRingGeo = new THREE.RingGeometry(geoSize * 0.46, geoSize * 0.58, 32);
+        const pathRingMat = new THREE.MeshBasicMaterial({
+          color: isRedPathology ? 0xdc2626 : 0xf59e0b,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.85
+        });
+        const pathRingMesh = new THREE.Mesh(pathRingGeo, pathRingMat);
+        pathRingMesh.position.set(0, 0, 0.07);
+        pathRingMesh.renderOrder = 6;
+        toothMesh.add(pathRingMesh);
       }      toothMesh.userData = {
         toothNum,
         socket,
@@ -746,6 +834,7 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
         baseX: worldX,
         baseY: worldY,
         baseZ: 0.5,
+        defaultColor: toothColor,
         isMobility: (
           ((status || '').toLowerCase().includes('mobility') && !(status || '').toLowerCase().includes('grade 0')) ||
           (toothComments || '').toLowerCase().includes('mobility grade i') ||
@@ -756,6 +845,7 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
         ) && !(toothComments || '').toLowerCase().includes('physiological mobility') && !(status || '').toLowerCase().includes('grade 0'),
         isDecay: (status || '').toLowerCase().includes('decay') || (status || '').toLowerCase().includes('caries') || (status || '').toLowerCase().includes('cavity') || (toothComments || '').toLowerCase().includes('caries'),
         isRootCanal: (status || '').toLowerCase().includes('canal') || (status || '').toLowerCase().includes('rct') || (status || '').toLowerCase().includes('pulpitis'),
+        isCleaning: (status || '').toLowerCase().includes('clean') || (status || '').toLowerCase().includes('scaling') || (status || '').toLowerCase().includes('calculus') || (status || '').toLowerCase().includes('tartar') || (toothComments || '').toLowerCase().includes('clean'),
         isMissing: (status || '').toLowerCase().includes('missing') || (status || '').toLowerCase().includes('extracted')
       };
 
@@ -845,7 +935,8 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
       clickableObjects.forEach((mesh, idx) => {
         const tNum = mesh.userData.toothNum;
         const isHovered = currentHoveredNum === tNum;
-        const isHighlighted = highlightedTeeth.includes(tNum);
+        const curHighlights = highlightedTeethRef.current || [];
+        const isHighlighted = curHighlights.includes(tNum) || curHighlights.includes(String(tNum));
         const hasRotation = mesh.userData.rotationDeg !== 0;
         const toothDelay = idx * 0.045;
 
@@ -891,21 +982,30 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
           mesh.material.opacity = 0.22 + (Math.sin(elapsed * 2) + 1) * 0.15;
         }
 
+        // 5. Cleaning Needed: Subtle hygiene breathing pulse
+        if (mesh.userData?.isCleaning) {
+          idleScaleMult = 1.0 + (Math.sin(elapsed * 3) * 0.035);
+          idleOffsetZ = 0.04 + (Math.sin(elapsed * 3) * 0.02);
+        }
+
         // 🌟 C. INTERACTIVE HOVER / HIGHLIGHT OVERRIDES
         if (isHovered && hasRotation) {
           const rotWobble = Math.sin(elapsed * 6) * THREE.MathUtils.degToRad(14);
           mesh.rotation.z = mesh.userData.baseRotationZ + rotWobble;
           mesh.scale.set(1.16, 1.16, 1.0);
           mesh.position.z = mesh.userData.baseZ + 0.22;
+          if (mesh.material && mesh.material.color) mesh.material.color.setHex(0x60a5fa);
         } else if (isHovered) {
           const hoverPulse = 1.12 + Math.sin(elapsed * 6) * 0.03;
           mesh.scale.set(hoverPulse, hoverPulse, 1.0);
           mesh.position.z = mesh.userData.baseZ + 0.18;
           mesh.rotation.z = mesh.userData.baseRotationZ;
-        } else if (isHighlighted && highlightedTeeth.length <= 4) {
+          if (mesh.material && mesh.material.color) mesh.material.color.setHex(0x60a5fa);
+        } else if (isHighlighted && curHighlights.length <= 4) {
           mesh.scale.set(1.08, 1.08, 1.0);
           mesh.position.z = mesh.userData.baseZ + 0.08;
           mesh.rotation.z = mesh.userData.baseRotationZ;
+          if (mesh.material && mesh.material.color) mesh.material.color.setHex(0x60a5fa);
         } else {
           // Combined Entrance Wave + Idle Clinical state
           const finalScale = mesh.userData.baseScale * entranceScaleMult * idleScaleMult;
@@ -916,6 +1016,9 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
             mesh.rotation.z = mesh.userData.baseRotationZ + rotIdleSway;
           } else {
             mesh.rotation.z = mesh.userData.baseRotationZ;
+          }
+          if (mesh.material && mesh.material.color && mesh.userData.defaultColor) {
+            mesh.material.color.copy(mesh.userData.defaultColor);
           }
         }
       });
@@ -976,14 +1079,25 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
   return (
     <div className={`relative w-full aspect-square select-none flex items-center justify-center ${className}`}>
       {/* 1. Empty Jaw Clinical Background Template (Equalized & Calibrated Proportions) */}
-      <img
-        src={bgImage}
-        alt={jawTitle}
-        className={`w-full h-full object-contain filter contrast-105 pointer-events-none absolute inset-0 transition-transform ${
-          isMaxilla ? 'scale-[1.12] -translate-y-1' : 'scale-[1.06] translate-y-0.5'
-        }`}
-        onError={(e) => { e.target.style.display = 'none'; }}
-      />
+      <picture className="contents">
+        <source srcSet={bgImage} type="image/webp" />
+        <img
+          src={fallbackBgImage}
+          alt={jawTitle}
+          loading="eager"
+          decoding="async"
+          className={`w-full h-full object-contain filter contrast-105 pointer-events-none absolute inset-0 transition-transform ${
+            isMaxilla ? 'scale-[1.12] -translate-y-1' : 'scale-[1.06] translate-y-0.5'
+          }`}
+          onError={(e) => {
+            if (e.target.src && !e.target.src.endsWith('.jpg')) {
+              e.target.src = fallbackBgImage;
+            } else {
+              e.target.style.display = 'none';
+            }
+          }}
+        />
+      </picture>
 
       {/* 2. Three.js Canvas Layer (Synchronized 1:1 with Arch Scale) */}
       <div 
@@ -1029,6 +1143,9 @@ function createClinicalOverlayCanvas(status, comments, toothNum, isMaxilla) {
         } else if (sLower.includes('crown') || sLower.includes('bridge') || sLower.includes('veneer')) {
           badgeBg = 'bg-amber-50 text-amber-900 border-amber-300 shadow-xs';
           statusDot = 'bg-amber-500';
+        } else if (sLower.includes('clean') || sLower.includes('calculus') || sLower.includes('scaling') || sLower.includes('tartar') || sLower.includes('prophylaxis')) {
+          badgeBg = 'bg-blue-50 text-blue-700 border-blue-300 shadow-xs';
+          statusDot = 'bg-blue-500';
         } else if (sLower.includes('healthy')) {
           badgeBg = 'bg-emerald-50 text-emerald-700 border-emerald-300';
           statusDot = 'bg-emerald-500';

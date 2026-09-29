@@ -1,0 +1,78 @@
+# ========================================================
+# Strix AI Penetration Testing Agent - Dentia Configuration
+# ========================================================
+version: "1.0"
+target:
+  name: "Dentia Dental Clinic PMS"
+  base_url: "http://localhost:5000"
+  frontend_url: "http://localhost:5173"
+  openapi_spec: "http://localhost:5000/swagger/v1/swagger.json"
+
+scan_mode:
+  type: "hybrid" # API contract + dynamic workflow testing
+  safe_exploitation_only: true # Benign PoCs only; prevents data deletion
+  concurrency: 5
+
+personas:
+  - name: "anonymous_attacker"
+    description: "Unauthenticated actor attempting brute force and unauthorized access"
+    auth:
+      type: "none"
+    tests:
+      - "rate_limiting_bypass"
+      - "sql_injection"
+      - "path_traversal"
+      - "unauthenticated_phi_leakage"
+
+  - name: "doctor_persona"
+    description: "Authenticated clinician in New Zealand region"
+    auth:
+      type: "bearer_token"
+      login_endpoint: "/api/auth/login"
+      credentials:
+        username: "test_doctor"
+        password: "DoctorSecurePassword123!"
+
+  - name: "patient_persona_a"
+    description: "Authenticated Patient A testing cross-tenant isolation"
+    auth:
+      type: "bearer_token"
+      login_endpoint: "/api/patient-auth/login"
+      credentials:
+        identifier: "PAT-0001"
+        password: "PatientPassword123!"
+
+  - name: "patient_persona_b"
+    description: "Authenticated Patient B used to evaluate IDOR against Patient A"
+    auth:
+      type: "bearer_token"
+      login_endpoint: "/api/patient-auth/login"
+      credentials:
+        identifier: "PAT-0002"
+        password: "PatientPassword123!"
+
+vulnerability_focus:
+  # 1. Broken Object Level Authorization (BOLA / IDOR)
+  - id: "BOLA-PATIENT-CHART"
+    description: "Verify Patient B cannot access /chart/36 or /api/patients/36"
+    severity: "CRITICAL"
+
+  # 2. Rate Limiting Validation
+  - id: "RATE-LIMIT-AUTH"
+    description: "Verify /api/auth/login and /api/patient-auth/login enforce 429 after 5 requests"
+    severity: "HIGH"
+
+  # 3. File Upload Bypass
+  - id: "FILE-UPLOAD-MAGIC-BYTES"
+    description: "Verify that polyglot files, fake JPEGs with executable payloads, and SVGs are rejected"
+    severity: "CRITICAL"
+
+  # 4. Information Leakage
+  - id: "INFO-LEAKAGE-ERRORS"
+    description: "Ensure unhandled exceptions do not return SQL traces, database names, or disk paths"
+    severity: "MEDIUM"
+
+reporting:
+  format: ["markdown", "json"]
+  output_dir: "./security_reports"
+  include_proof_of_concept: true
