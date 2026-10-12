@@ -154,6 +154,20 @@ namespace DentistAPI.Controllers
             return Ok(new { message = $"Doctor status set to {(request.IsActive ? "Active" : "Inactive")}." });
         }
 
+        // Superadmin or self can update password
+        [HttpPut("doctors/{id}/password")]
+        public async Task<IActionResult> UpdatePassword(int id, [FromBody] UpdatePasswordRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Password))
+            {
+                return BadRequest(new { message = "Password cannot be empty." });
+            }
+
+            string hashedPassword = BCrypt.Net.BCrypt.HashPassword(request.Password);
+            await _repository.UpdateDoctorPasswordAsync(id, hashedPassword);
+            return Ok(new { message = "Password updated successfully." });
+        }
+
         // Public presence and session telemetry stats for Login Page
         [HttpGet("stats")]
         [HttpGet("presence-stats")]

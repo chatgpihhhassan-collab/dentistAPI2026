@@ -46,3 +46,10 @@ find_patient40.ps1
 # Compiled frontend assets in backend wwwroot
 DentistAPI/wwwroot/assets/
 DentistAPI/wwwroot/index.html
+
+# Temp files and artifacts
+err.txt
+out.txt
+*.zip
+Dentia_Dental_Bridge_Setup/
+DentalBridge.Service/
