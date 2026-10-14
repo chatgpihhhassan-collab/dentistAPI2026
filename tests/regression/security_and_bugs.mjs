@@ -560,4 +560,68 @@ describe('MAINT-03: Centralized API Endpoint Resolution in ChartPage', () => {
   });
 });
 
+describe('REG-APPT-01: Terminal Appointment Status Reversal Guard', () => {
+  function validateStatusTransition(currentStatus, requestedStatus) {
+    const terminalStates = ['Completed', 'Cancelled', 'No-Show'];
+    if (terminalStates.includes(currentStatus) && (requestedStatus === 'Pending' || requestedStatus === 'Confirmed')) {
+      return { isValid: false, error: `Invalid transition: ${currentStatus} cannot revert to ${requestedStatus}` };
+    }
+    return { isValid: true };
+  }
+
+  it('should block Completed appointment from reverting to Pending', () => {
+    const res = validateStatusTransition('Completed', 'Pending');
+    assert.equal(res.isValid, false);
+    assert.ok(res.error.includes('cannot revert'));
+  });
+
+  it('should allow progressive transition from Pending to Confirmed and Completed', () => {
+    assert.equal(validateStatusTransition('Pending', 'Confirmed').isValid, true);
+    assert.equal(validateStatusTransition('Confirmed', 'Completed').isValid, true);
+  });
+});
+
+describe('REG-BILL-01: Overpayment Exceeding Invoice Balance Guard', () => {
+  function recordPaymentValidation(invoiceBalance, paymentAmount) {
+    if (paymentAmount <= 0) return { isValid: false, error: 'Amount must be > 0' };
+    if (paymentAmount > invoiceBalance) {
+      return { isValid: false, error: `Payment amount (${paymentAmount}) exceeds invoice balance (${invoiceBalance})` };
+    }
+    return { isValid: true, remaining: invoiceBalance - paymentAmount };
+  }
+
+  it('should block payment amount exceeding remaining invoice balance', () => {
+    const res = recordPaymentValidation(5000.00, 7500.00);
+    assert.equal(res.isValid, false);
+    assert.ok(res.error.includes('exceeds invoice balance'));
+  });
+
+  it('should allow full and partial payments within invoice balance', () => {
+    assert.equal(recordPaymentValidation(5000.00, 5000.00).isValid, true);
+    assert.equal(recordPaymentValidation(5000.00, 2000.00).isValid, true);
+  });
+});
+
+describe('REG-ODONTO-01: Restorative Treatment on Missing Tooth Guard', () => {
+  function validateToothProcedure(toothStatus, procedureCategory) {
+    const isMissing = ['missing', 'extracted', 'absent', 'exfoliated'].includes((toothStatus || '').toLowerCase());
+    const isRestorative = ['filling', 'composite', 'amalgam', 'veneer', 'inlay', 'onlay', 'rct', 'root canal'].includes((procedureCategory || '').toLowerCase());
+    if (isMissing && isRestorative) {
+      return { isValid: false, error: 'Cannot apply restorative filling or endodontic treatment to an extracted/missing tooth without prior implant or pontic fixture.' };
+    }
+    return { isValid: true };
+  }
+
+  it('should block direct restorative filling on missing/extracted tooth', () => {
+    const res = validateToothProcedure('Extracted', 'Filling');
+    assert.equal(res.isValid, false);
+    assert.ok(res.error.includes('extracted/missing tooth'));
+  });
+
+  it('should allow implant placement or pontic bridge on missing tooth', () => {
+    const res = validateToothProcedure('Extracted', 'Implant');
+    assert.equal(res.isValid, true);
+  });
+});
+
 

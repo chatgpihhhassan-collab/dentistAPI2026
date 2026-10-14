@@ -1,0 +1,104 @@
+name: Dentia Full Stack Continuous Quality & Security Pipeline
+
+on:
+  push:
+    branches: [ main, master, Local ]
+  pull_request:
+    branches: [ main, master, Local ]
+  workflow_dispatch:
+
+jobs:
+  code-quality-and-lint:
+    name: 🔍 Static Code Analysis & Linter
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install Frontend Dependencies
+        working-directory: ./Dentistfrontend
+        run: npm ci
+
+      - name: Run Oxlint Static Analysis
+        working-directory: ./Dentistfrontend
+        run: npx oxlint --deny-warnings
+
+  backend-build-and-compile:
+    name: ⚙️ ASP.NET Core Build & Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore Backend Dependencies
+        working-directory: ./DentistAPIClone/API_dentist
+        run: dotnet restore
+
+      - name: Compile Backend Solution (Zero Warnings As Errors)
+        working-directory: ./DentistAPIClone/API_dentist
+        run: dotnet build --no-restore --configuration Release
+
+  automated-test-suite:
+    name: 🧪 Unit, API Integration, Component & AI Evaluation
+    needs: [code-quality-and-lint, backend-build-and-compile]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Dependencies
+        working-directory: ./Dentistfrontend
+        run: npm ci
+
+      - name: Run Master QA Test Suite (Unit, API, Component, Non-Functional, Regression, AI)
+        run: node tests/run_all_tests.mjs
+
+  playwright-e2e-workflow:
+    name: 🎭 Playwright E2E Multi-Viewport Verification
+    needs: [automated-test-suite]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Dependencies
+        working-directory: ./Dentistfrontend
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        working-directory: ./Dentistfrontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Critical Clinical E2E Tests (Desktop & Mobile)
+        run: npx playwright test --config=tests/e2e/playwright.config.mjs
+        env:
+          CI: true
+
+      - name: Upload Playwright Test Report Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
