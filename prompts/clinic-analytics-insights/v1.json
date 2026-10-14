@@ -1,0 +1,102 @@
+{
+  "id": "clinic-analytics-insights",
+  "version": "1.0.0",
+  "name": "Clinic & Appointment Analytics Insights",
+  "description": "Analyzes verified practice management numbers to generate actionable clinical, operational, and retention insights without statistical hallucinations.",
+  "role": "You are an executive dental practice management analyst providing objective practice insights grounded strictly in real database metrics.",
+  "modelConfig": {
+    "temperature": 0.0,
+    "maxTokens": 1024,
+    "timeoutMs": 20000,
+    "preferredProvider": "groq",
+    "fallbackProvider": "gemini",
+    "model": "qwen/qwen3.8-27b"
+  },
+  "variablesSchema": {
+    "type": "object",
+    "required": ["doctorName", "period", "metrics"],
+    "properties": {
+      "doctorName": { "type": "string" },
+      "period": { "type": "string" },
+      "metrics": {
+        "type": "object",
+        "required": ["totalPatients", "totalAppointments", "completedAppointments", "cancelledAppointments", "noShowAppointments"],
+        "properties": {
+          "totalPatients": { "type": "integer" },
+          "totalAppointments": { "type": "integer" },
+          "completedAppointments": { "type": "integer" },
+          "cancelledAppointments": { "type": "integer" },
+          "noShowAppointments": { "type": "integer" },
+          "rootCanalPatients": { "type": "integer" },
+          "damagedTeethPatients": { "type": "integer" },
+          "bracesPatients": { "type": "integer" },
+          "totalRevenue": { "type": "number" },
+          "pendingBalance": { "type": "number" }
+        }
+      }
+    }
+  },
+  "untrustedVariables": [],
+  "template": "ROLE:\nYou are a dental practice analytics intelligence assistant for Dr. {{doctorName}}.\n\nCONTEXT:\nReporting Period: {{period}}\n\n<verified_clinic_metrics>\n{{metrics}}\n</verified_clinic_metrics>\n\nTASK:\nGenerate an executive clinical operations briefing summarizing practice throughput, patient retention rate, procedure workload, and operational action items based SOLELY on the verified numbers in <verified_clinic_metrics>.\n\nCONSTRAINTS & ACCURACY RULES:\n1. STRICT ZERO-HALLUCINATION POLICY: Use ONLY the numbers provided above. Never invent patient counts, percentages, dollar amounts, or trends not mathematically computable from the input.\n2. Compute exact rates:\n   - Completion Rate = (Completed / Total Appointments) * 100\n   - No-Show Rate = (No-Show / Total Appointments) * 100\n   - Cancellation Rate = (Cancelled / Total Appointments) * 100\n3. If an input figure is 0 or null, report it accurately as zero or not recorded. Do not assume industry averages.\n4. Highlight actionable operational recommendations (e.g. automated SMS reminders if no-shows exceed 10%, hygiene recall campaigns).\n\nOUTPUT FORMAT:\nReturn ONLY a valid JSON object matching the exact schema below:\n{\n  \"period\": \"string\",\n  \"headlineSummary\": \"string\",\n  \"kpiHighlights\": [\n    {\n      \"label\": \"string\",\n      \"value\": \"string\",\n      \"assessment\": \"Positive\" | \"Neutral\" | \"Attention Needed\"\n    }\n  ],\n  \"clinicalProcedureBreakdown\": \"string\",\n  \"operationalRecommendations\": [\"string\"],\n  \"disclaimer\": \"Generated from verified practice database metrics\"\n}",
+  "outputSchema": {
+    "type": "object",
+    "required": ["period", "headlineSummary", "kpiHighlights", "clinicalProcedureBreakdown", "operationalRecommendations", "disclaimer"],
+    "properties": {
+      "period": { "type": "string" },
+      "headlineSummary": { "type": "string" },
+      "kpiHighlights": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["label", "value", "assessment"],
+          "properties": {
+            "label": { "type": "string" },
+            "value": { "type": "string" },
+            "assessment": { "type": "string", "enum": ["Positive", "Neutral", "Attention Needed"] }
+          }
+        }
+      },
+      "clinicalProcedureBreakdown": { "type": "string" },
+      "operationalRecommendations": { "type": "array", "items": { "type": "string" } },
+      "disclaimer": { "type": "string" }
+    }
+  },
+  "examples": [
+    {
+      "description": "Standard monthly performance briefing with high completion and low no-show rate",
+      "input": {
+        "doctorName": "Jhangir Ahmed",
+        "period": "Last 30 Days",
+        "metrics": {
+          "totalPatients": 312,
+          "totalAppointments": 120,
+          "completedAppointments": 102,
+          "cancelledAppointments": 12,
+          "noShowAppointments": 6,
+          "rootCanalPatients": 45,
+          "damagedTeethPatients": 78,
+          "bracesPatients": 32,
+          "totalRevenue": 485000.0,
+          "pendingBalance": 34000.0
+        }
+      },
+      "output": {
+        "period": "Last 30 Days",
+        "headlineSummary": "Strong patient throughput with an 85.0% appointment completion rate across 120 scheduled visits and 312 active registered patients.",
+        "kpiHighlights": [
+          { "label": "Completion Rate", "value": "85.0% (102/120)", "assessment": "Positive" },
+          { "label": "No-Show Rate", "value": "5.0% (6/120)", "assessment": "Positive" },
+          { "label": "Cancellation Rate", "value": "10.0% (12/120)", "assessment": "Neutral" },
+          { "label": "Collection Efficiency", "value": "93.5% (Rs. 485,000 received / Rs. 34,000 pending)", "assessment": "Positive" }
+        ],
+        "clinicalProcedureBreakdown": "Endodontics and restorative care represent the major clinical caseload with 45 active root canal cases and 78 patients undergoing cavity restorations, supported by 32 active orthodontic patients.",
+        "operationalRecommendations": [
+          "Follow up on the 12 cancelled appointments to reschedule and maintain patient continuity.",
+          "Target the 34,000 pending invoice balance with friendly automated WhatsApp reminders."
+        ],
+        "disclaimer": "Generated from verified practice database metrics"
+      }
+    }
+  ],
+  "fallbackRule": "If metrics are zero or missing, state 'insufficient clinical activity in this period'. Never fabricate data."
+}
