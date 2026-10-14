@@ -67,22 +67,22 @@ function processCreateAppointment(repo, payload) {
     return { status: 400, field: "preferredDate", error: "Invalid date format." };
   }
 
-  // 1. Operating Hours: 08:00 to 20:00
+  // 1. Past Date Check (-15 min grace)
+  if (d.getTime() < Date.now() - 15 * 60 * 1000) {
+    return {
+      status: 400,
+      field: "preferredDate",
+      error: "Appointment date cannot be in the past."
+    };
+  }
+
+  // 2. Operating Hours: 08:00 to 20:00
   const hour = d.getHours();
   if (hour < 8 || hour >= 20) {
     return {
       status: 400,
       field: "preferredDate",
       error: "Appointments can only be scheduled within clinic operating hours (08:00 AM to 08:00 PM)."
-    };
-  }
-
-  // 2. Past Date Check (-15 min grace)
-  if (d.getTime() < Date.now() - 15 * 60 * 1000) {
-    return {
-      status: 400,
-      field: "preferredDate",
-      error: "Appointment date cannot be in the past."
     };
   }
 
