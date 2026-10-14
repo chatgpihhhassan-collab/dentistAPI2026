@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using DentistAPI.Repositories;
 using DentistAPI.Models;
 using DentistAPI.Services;
@@ -14,6 +15,7 @@ namespace DentistAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [EnableRateLimiting("ai-policy")]
     public class ChatbotController : ControllerBase
     {
         private readonly string ApiKey;

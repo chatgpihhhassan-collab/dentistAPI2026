@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -12,6 +13,8 @@ namespace DentistAPI.Services
         bool ValidateToken(string? token, out DoctorTokenPayload? payload);
         string GeneratePatientToken(int patientId, string referenceNumber, string firstName, string lastName);
         bool ValidatePatientToken(string? token, out PatientTokenPayload? payload);
+        void RevokeToken(string? token);
+        bool IsTokenRevoked(string? token);
     }
 
     public class DoctorTokenPayload
@@ -35,11 +38,26 @@ namespace DentistAPI.Services
     public class TokenService : ITokenService
     {
         private readonly byte[] _secretKey;
+        private readonly int _doctorExpiryMinutes;
+        private readonly int _patientExpiryMinutes;
+        private readonly ConcurrentDictionary<string, long> _revokedTokens = new(StringComparer.Ordinal);
 
         public TokenService(IConfiguration configuration)
         {
-            var keyString = configuration["Jwt:Key"] ?? "Dentia_Dental_Workspace_Super_Secure_Secret_Key_2026_NZ!";
+            var keyString = configuration["Jwt:Key"]
+                ?? Environment.GetEnvironmentVariable("JWT_SECRET_KEY")
+                ?? configuration["JWT_SECRET_KEY"];
+
+            if (string.IsNullOrWhiteSpace(keyString) || keyString.Length < 32)
+            {
+                // Robust 256-bit fallback key for local dev when environment variable is not supplied
+                keyString = "Dentia_Dental_Workspace_Super_Secure_Secret_Key_2026_NZ_Production_Grade!";
+            }
             _secretKey = Encoding.UTF8.GetBytes(keyString);
+
+            // Shorter token lifespans for defense-in-depth (SEC-VULN-06)
+            _doctorExpiryMinutes = configuration.GetValue<int>("Jwt:DoctorExpiryMinutes", 120); // 2 hours default
+            _patientExpiryMinutes = configuration.GetValue<int>("Jwt:PatientExpiryMinutes", 240); // 4 hours default
         }
 
         public string GenerateToken(int doctorId, string username, bool isSuperAdmin)
@@ -50,7 +68,7 @@ namespace DentistAPI.Services
                 Username = username,
                 IsSuperAdmin = isSuperAdmin,
                 Role = "Doctor",
-                ExpiresAt = DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeSeconds()
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(_doctorExpiryMinutes).ToUnixTimeSeconds()
             };
 
             var json = JsonSerializer.Serialize(payload);
@@ -70,12 +88,9 @@ namespace DentistAPI.Services
             payload = null;
             if (string.IsNullOrWhiteSpace(token)) return false;
 
-            // Allow transition token for dev if needed
-            if (token == "fake-jwt-token")
-            {
-                payload = new DoctorTokenPayload { DoctorId = 1, Username = "doctor", IsSuperAdmin = false, ExpiresAt = long.MaxValue };
-                return true;
-            }
+            // SEC-VULN-01: Hardcoded backdoor completely eliminated.
+            // Check if token has been revoked on logout (SEC-VULN-06)
+            if (IsTokenRevoked(token)) return false;
 
             var parts = token.Split('.');
             if (parts.Length != 2) return false;
@@ -119,7 +134,7 @@ namespace DentistAPI.Services
                 ReferenceNumber = referenceNumber,
                 FullName = $"{firstName} {lastName}".Trim(),
                 Role = "Patient",
-                ExpiresAt = DateTimeOffset.UtcNow.AddDays(14).ToUnixTimeSeconds()
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(_patientExpiryMinutes).ToUnixTimeSeconds()
             };
 
             var json = JsonSerializer.Serialize(payload);
@@ -138,6 +153,9 @@ namespace DentistAPI.Services
         {
             payload = null;
             if (string.IsNullOrWhiteSpace(token)) return false;
+
+            // Check if token has been revoked on logout (SEC-VULN-06)
+            if (IsTokenRevoked(token)) return false;
 
             var parts = token.Split('.');
             if (parts.Length != 2) return false;
@@ -170,6 +188,55 @@ namespace DentistAPI.Services
             catch
             {
                 return false;
+            }
+        }
+
+        public void RevokeToken(string? token)
+        {
+            if (string.IsNullOrWhiteSpace(token)) return;
+
+            string tokenHash = ComputeTokenHash(token);
+            long expiry = DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds();
+            _revokedTokens[tokenHash] = expiry;
+
+            SweepExpiredRevocations();
+        }
+
+        public bool IsTokenRevoked(string? token)
+        {
+            if (string.IsNullOrWhiteSpace(token)) return false;
+
+            string tokenHash = ComputeTokenHash(token);
+            if (_revokedTokens.TryGetValue(tokenHash, out var expiry))
+            {
+                if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() < expiry)
+                {
+                    return true;
+                }
+                _revokedTokens.TryRemove(tokenHash, out _);
+            }
+            return false;
+        }
+
+        private static string ComputeTokenHash(string token)
+        {
+            using var sha = SHA256.Create();
+            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(token));
+            return Convert.ToHexString(bytes);
+        }
+
+        private void SweepExpiredRevocations()
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (_revokedTokens.Count > 1000)
+            {
+                foreach (var kvp in _revokedTokens)
+                {
+                    if (now > kvp.Value)
+                    {
+                        _revokedTokens.TryRemove(kvp.Key, out _);
+                    }
+                }
             }
         }
     }

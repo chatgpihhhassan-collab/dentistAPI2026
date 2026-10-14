@@ -54,9 +54,10 @@ async function main() {
     'tests/api/*.test.mjs',
     'tests/component/*.test.mjs',
     'tests/non-functional/*.test.mjs',
-    'tests/regression/security_and_bugs.mjs'
+    'tests/regression/security_and_bugs.mjs',
+    'tests/security/*.test.mjs'
   ]);
-  results.push({ name: 'Unit, API, Component, Non-Functional & Regression Suites', passed: phase1Pass });
+  results.push({ name: 'Unit, API, Component, Non-Functional, Regression & Security Suites', passed: phase1Pass });
 
   // Phase 2: AI Clinical Prompt Evaluation (80 scenarios, 8 prompts)
   console.log(`\n${colors.bold}[PHASE 2] Running AI Clinical Prompt Evaluation Suite...${colors.reset}`);

@@ -79,6 +79,22 @@ namespace DentistAPI.Controllers
             });
         }
 
+        [HttpPost("logout")]
+        public IActionResult Logout()
+        {
+            string? authHeader = Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                string token = authHeader.Substring(7).Trim();
+                _tokenService.RevokeToken(token);
+            }
+            else if (Request.Headers.TryGetValue("X-Doctor-Token", out var headerToken))
+            {
+                _tokenService.RevokeToken(headerToken.FirstOrDefault());
+            }
+            return Ok(new { message = "Logged out successfully. Token invalidated." });
+        }
+
         [HttpGet("doctors")]
         public async Task<IActionResult> GetDoctors()
         {

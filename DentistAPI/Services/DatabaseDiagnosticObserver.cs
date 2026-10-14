@@ -80,7 +80,9 @@ namespace DentistAPI.Services
             {
                 foreach (DbParameter p in cmd.Parameters)
                 {
-                    paramSb.AppendLine($"{p.ParameterName} = {(p.Value == null || p.Value == DBNull.Value ? "NULL" : $"'{p.Value}'")}");
+                    bool isSensitive = IsSensitiveParameter(p.ParameterName);
+                    string val = isSensitive ? "[REDACTED_SENSITIVE_PHI]" : (p.Value == null || p.Value == DBNull.Value ? "NULL" : $"'{p.Value}'");
+                    paramSb.AppendLine($"{p.ParameterName} = {val}");
                 }
             }
 
@@ -92,6 +94,20 @@ namespace DentistAPI.Services
                 CommandText = cmdText,
                 Parameters = paramSb.ToString()
             };
+        }
+
+        private static bool IsSensitiveParameter(string paramName)
+        {
+            if (string.IsNullOrWhiteSpace(paramName)) return false;
+            string clean = paramName.TrimStart('@', ':').ToLowerInvariant();
+            return clean.Contains("password") ||
+                   clean.Contains("token") ||
+                   clean.Contains("secret") ||
+                   clean.Contains("cnic") ||
+                   clean.Contains("phone") ||
+                   clean.Contains("medical") ||
+                   clean.Contains("transcript") ||
+                   clean.Contains("hash");
         }
 
         private void HandleCommandAfter(object payload)

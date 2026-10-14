@@ -24,6 +24,7 @@ namespace DentistAPI.Controllers
         private readonly IConfiguration _config;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IFileUploadSecurityService _fileUploadService;
+        private readonly IAuditLogService _auditLogService;
         private readonly string _apiKey;
         private readonly string _geminiEndpoint;
 
@@ -31,15 +32,56 @@ namespace DentistAPI.Controllers
             DentalRepository repository, 
             IConfiguration config, 
             IHttpClientFactory httpClientFactory,
-            IFileUploadSecurityService fileUploadService)
+            IFileUploadSecurityService fileUploadService,
+            IAuditLogService auditLogService)
         {
             _repository = repository;
             _config = config;
             _httpClientFactory = httpClientFactory;
             _fileUploadService = fileUploadService;
+            _auditLogService = auditLogService;
             _apiKey = config["GEMINI_API_KEY"] ?? string.Empty;
             var modelName = !string.IsNullOrEmpty(config["GEMINI_MODEL"]) ? config["GEMINI_MODEL"]! : "gemini-flash-latest";
             _geminiEndpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent";
+        }
+
+        private bool TryAuthorizePatientAccess(int patientId, out int? callerId, out string callerRole, out IActionResult? failureResult)
+        {
+            failureResult = null;
+            callerId = null;
+            callerRole = "Anonymous";
+
+            if (HttpContext.Items.TryGetValue("IsSuperAdmin", out var saObj) && saObj is bool isSa && isSa)
+            {
+                callerRole = "SuperAdmin";
+                if (HttpContext.Items.TryGetValue("DoctorId", out var dObj) && dObj is int dId) callerId = dId;
+                return true;
+            }
+
+            if (HttpContext.Items.TryGetValue("DoctorId", out var docIdObj) && docIdObj is int doctorId && doctorId > 0)
+            {
+                callerId = doctorId;
+                callerRole = "Doctor";
+                return true;
+            }
+
+            if (HttpContext.Items.TryGetValue("PatientId", out var pIdObj) && pIdObj is int callerPatientId && callerPatientId > 0)
+            {
+                callerId = callerPatientId;
+                callerRole = "Patient";
+                if (callerPatientId == patientId)
+                {
+                    return true;
+                }
+
+                string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                _auditLogService.LogAccess(callerPatientId, "Patient", patientId, "BOLA_ACCESS_DENIED", "Patient attempted unauthorized access to another patient's record.", ip);
+                failureResult = StatusCode(StatusCodes.Status403Forbidden, new { message = "Access denied. Patients may only view their own clinical file." });
+                return false;
+            }
+
+            failureResult = Unauthorized(new { message = "Authentication required to access patient clinical records." });
+            return false;
         }
 
         [HttpGet("search")]
@@ -612,15 +654,28 @@ Rules:
         [HttpGet("{id}")]
         public async Task<IActionResult> GetPatient(int id)
         {
+            if (!TryAuthorizePatientAccess(id, out var callerId, out var callerRole, out var failureResult))
+            {
+                return failureResult!;
+            }
+
             var patient = await _repository.GetPatientByIdAsync(id);
             if (patient == null) return NotFound("Patient not found.");
+
+            _auditLogService.LogAccess(callerId, callerRole, id, "VIEW_PATIENT_DEMOGRAPHICS", $"Patient {id} record retrieved.", HttpContext.Connection.RemoteIpAddress?.ToString());
             return Ok(patient);
         }
 
         [HttpGet("{id}/chart")]
         public async Task<IActionResult> GetChart(int id)
         {
+            if (!TryAuthorizePatientAccess(id, out var callerId, out var callerRole, out var failureResult))
+            {
+                return failureResult!;
+            }
+
             var chart = await _repository.GetPatientChartAsync(id);
+            _auditLogService.LogAccess(callerId, callerRole, id, "VIEW_PATIENT_CHART", $"Chart for patient {id} retrieved.", HttpContext.Connection.RemoteIpAddress?.ToString());
             return Ok(chart);
         }
 
@@ -723,7 +778,12 @@ Rules:
         [HttpPost("{id}/chart/export")]
         public IActionResult ExportChart(int id)
         {
-            // Simulate exporting chart to PDF using Nexu / Puppeteer
+            if (!TryAuthorizePatientAccess(id, out var callerId, out var callerRole, out var failureResult))
+            {
+                return failureResult!;
+            }
+
+            _auditLogService.LogAccess(callerId, callerRole, id, "EXPORT_PATIENT_CHART", $"Chart exported to PDF for patient {id}.", HttpContext.Connection.RemoteIpAddress?.ToString());
             string simulatedPath = $"/exports/patient_{id}_chart_{System.DateTime.Now:yyyyMMdd}.pdf";
             return Ok(new { message = "Chart exported successfully.", path = simulatedPath });
         }
@@ -731,7 +791,13 @@ Rules:
         [HttpGet("{id}/prescriptions")]
         public async Task<IActionResult> GetPrescriptions(int id)
         {
+            if (!TryAuthorizePatientAccess(id, out var callerId, out var callerRole, out var failureResult))
+            {
+                return failureResult!;
+            }
+
             var prescriptions = await _repository.GetPrescriptionsAsync(id);
+            _auditLogService.LogAccess(callerId, callerRole, id, "VIEW_PRESCRIPTIONS", $"Prescription history for patient {id} accessed.", HttpContext.Connection.RemoteIpAddress?.ToString());
             return Ok(prescriptions);
         }
 
@@ -795,14 +861,26 @@ Rules:
         [HttpGet("{id}/clinical-logs")]
         public async Task<IActionResult> GetClinicalLogs(int id)
         {
+            if (!TryAuthorizePatientAccess(id, out var callerId, out var callerRole, out var failureResult))
+            {
+                return failureResult!;
+            }
+
             var logs = await _repository.GetClinicalLogsAsync(id);
+            _auditLogService.LogAccess(callerId, callerRole, id, "VIEW_CLINICAL_LOGS", $"Clinical logs for patient {id} accessed.", HttpContext.Connection.RemoteIpAddress?.ToString());
             return Ok(logs);
         }
 
         [HttpGet("{id}/diagnostic-assessment")]
         public async Task<IActionResult> GetDiagnosticAssessment(int id)
         {
+            if (!TryAuthorizePatientAccess(id, out var callerId, out var callerRole, out var failureResult))
+            {
+                return failureResult!;
+            }
+
             var record = await _repository.GetDiagnosticAssessmentAsync(id);
+            _auditLogService.LogAccess(callerId, callerRole, id, "VIEW_DIAGNOSTIC_ASSESSMENT", $"Diagnostic assessment for patient {id} accessed.", HttpContext.Connection.RemoteIpAddress?.ToString());
             if (record == null) return Ok(null);
             return Ok(record);
         }

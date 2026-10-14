@@ -185,12 +185,44 @@ namespace DentistAPI.Services
         private static string SanitizeBody(string body)
         {
             if (string.IsNullOrWhiteSpace(body)) return "(empty)";
-            // Hide passwords in logs for security
-            return System.Text.RegularExpressions.Regex.Replace(
-                body,
+            string sanitized = body;
+
+            // 1. Passwords
+            sanitized = System.Text.RegularExpressions.Regex.Replace(
+                sanitized,
                 @"(""password""\s*:\s*"")[^""]+("")",
                 "$1******$2",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            // 2. Auth Tokens (JWT, session, refresh)
+            sanitized = System.Text.RegularExpressions.Regex.Replace(
+                sanitized,
+                @"(""(?:token|accessToken|access_token|refreshToken|refresh_token)""\s*:\s*"")[^""]+("")",
+                "$1[REDACTED_TOKEN]$2",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            // 3. National ID / CNIC
+            sanitized = System.Text.RegularExpressions.Regex.Replace(
+                sanitized,
+                @"(""(?:cnic|nationalId|referenceNumber)""\s*:\s*"")[^""]+("")",
+                "$1[REDACTED_PII]$2",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            // 4. Phone numbers
+            sanitized = System.Text.RegularExpressions.Regex.Replace(
+                sanitized,
+                @"(""(?:phone|phoneNumber|mobile)""\s*:\s*"")[^""]+("")",
+                "$1[REDACTED_PHONE]$2",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            // 5. Sensitive Medical/Clinical Notes
+            sanitized = System.Text.RegularExpressions.Regex.Replace(
+                sanitized,
+                @"(""(?:medicalHistory|medicalNotes|transcript)""\s*:\s*"")[^""]+("")",
+                "$1[REDACTED_PHI]$2",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            return sanitized;
         }
     }
 }

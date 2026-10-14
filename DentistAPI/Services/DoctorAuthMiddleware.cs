@@ -46,13 +46,17 @@ namespace DentistAPI.Services
                     {
                         token = headerToken.FirstOrDefault();
                     }
-                    else if (context.Request.Query.TryGetValue("token", out var queryToken))
+                    else if (path.StartsWith("/api/radiographs/") && path.EndsWith("/image") && context.Request.Method == "GET")
                     {
-                        token = queryToken.FirstOrDefault();
-                    }
-                    else if (context.Request.Query.TryGetValue("access_token", out var queryAccessToken))
-                    {
-                        token = queryAccessToken.FirstOrDefault();
+                        // SEC-VULN-07: Restrict URL query tokens strictly to radiograph <img> streaming
+                        if (context.Request.Query.TryGetValue("token", out var queryToken))
+                        {
+                            token = queryToken.FirstOrDefault();
+                        }
+                        else if (context.Request.Query.TryGetValue("access_token", out var queryAccessToken))
+                        {
+                            token = queryAccessToken.FirstOrDefault();
+                        }
                     }
 
                     if (string.IsNullOrEmpty(token) || !tokenService.ValidateToken(token, out var payload))

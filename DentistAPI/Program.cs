@@ -40,6 +40,7 @@ builder.Services.AddScoped<GeminiDentalNotesService>();
 
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddSingleton<IFileUploadSecurityService, FileUploadSecurityService>();
+builder.Services.AddSingleton<IAuditLogService, AuditLogService>();
 
 // Configure Rate Limiting Policies
 builder.Services.AddRateLimiter(options =>
@@ -136,6 +137,18 @@ var app = builder.Build();
 
 // 1. Centralized Global Exception Middleware (No information leakage, attaches Correlation ID)
 app.UseMiddleware<GlobalExceptionMiddleware>();
+
+// Security Headers Middleware (SEC-06 & SEC-08)
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
+    context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    context.Response.Headers["X-XSS-Protection"] = "0";
+    context.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https: http://localhost:* ws://localhost:*; frame-ancestors 'self';";
+    await next();
+});
 
 // 2. Intercept and log all incoming API calls, URLs, and responses
 app.UseMiddleware<ApiRequestLoggingMiddleware>();
