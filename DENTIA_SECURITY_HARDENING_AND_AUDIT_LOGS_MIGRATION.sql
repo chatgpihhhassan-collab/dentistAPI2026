@@ -282,7 +282,7 @@ IF NOT EXISTS (
 BEGIN
     CREATE NONCLUSTERED INDEX IX_Patients_SecurityScoping
     ON [dentist].[Patients] ([PatientID], [DoctorID])
-    INCLUDE ([FirstName], [LastName], [CNIC], [Phone], [IsActive]);
+    INCLUDE ([FirstName], [LastName], [Phone]);
 
     PRINT '>> [SUCCESS] Created composite index [IX_Patients_SecurityScoping].';
 END
