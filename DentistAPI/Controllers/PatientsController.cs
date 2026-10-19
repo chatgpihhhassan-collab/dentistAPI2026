@@ -13,6 +13,7 @@ using DentistAPI.Models;
 using DentistAPI.Services;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Logging;
 
 namespace DentistAPI.Controllers
 {
@@ -25,6 +26,7 @@ namespace DentistAPI.Controllers
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IFileUploadSecurityService _fileUploadService;
         private readonly IAuditLogService _auditLogService;
+        private readonly ILogger<PatientsController> _logger;
         private readonly string _apiKey;
         private readonly string _geminiEndpoint;
 
@@ -33,13 +35,15 @@ namespace DentistAPI.Controllers
             IConfiguration config, 
             IHttpClientFactory httpClientFactory,
             IFileUploadSecurityService fileUploadService,
-            IAuditLogService auditLogService)
+            IAuditLogService auditLogService,
+            ILogger<PatientsController> logger)
         {
             _repository = repository;
             _config = config;
             _httpClientFactory = httpClientFactory;
             _fileUploadService = fileUploadService;
             _auditLogService = auditLogService;
+            _logger = logger;
             _apiKey = config["GEMINI_API_KEY"] ?? string.Empty;
             var modelName = !string.IsNullOrEmpty(config["GEMINI_MODEL"]) ? config["GEMINI_MODEL"]! : "gemini-flash-latest";
             _geminiEndpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent";
@@ -265,8 +269,12 @@ namespace DentistAPI.Controllers
                             Region = string.IsNullOrEmpty(response.Region) ? (request.Region ?? "PK") : response.Region,
                             NHINumber = response.NhiNumber,
                             CurrentTreatmentPlan = string.IsNullOrEmpty(response.CurrentTreatmentPlan) ? "General Consultation" : response.CurrentTreatmentPlan,
+                            WhatsAppOptIn = response.WhatsAppOptIn ?? false,
                             DoctorID = request.DoctorId
                         };
+
+                        _logger.LogInformation("[AI Intake] Step 3: Saving patient {FirstName} {LastName} with WhatsAppOptIn={OptIn} to SQL database", 
+                            newPatient.FirstName, newPatient.LastName, newPatient.WhatsAppOptIn);
 
                         int newId = await _repository.CreatePatientAsync(newPatient);
                         newPatient.PatientID = newId;
@@ -309,6 +317,7 @@ Extract any available patient fields and return ONLY a valid JSON object matchin
   ""currentTreatmentPlan"": ""General Consultation"",
   ""allergies"": [],
   ""medicalNotes"": """",
+  ""whatsAppOptIn"": null,
   ""email"": """",
   ""summary"": """",
   ""extractedFields"": []
@@ -322,7 +331,8 @@ Rules:
 5. If treatment / reason for visit is mentioned (e.g. 'needs whitening', 'braces consult', 'severe toothache', 'root canal', 'cavity filling'), set currentTreatmentPlan to one of: 'General Consultation', 'Toothache & Emergency', 'Teeth Whitening (Cosmetic)', 'Braces (Orthodontics)', 'Cavity Restorative', 'Root Canal Treatment (RCT)', 'Scaling & Deep Cleaning' and add 'currentTreatmentPlan' to extractedFields.
 6. If any allergy or medical condition is mentioned (e.g. 'allergic to penicillin', 'latex allergy', 'patient is diabetic', 'hypertension', 'bleeding disorder'), add the tag to allergies array and add 'allergies' to extractedFields.
 7. If chief complaint or medical background is spoken, set medicalNotes and add 'medicalNotes' to extractedFields.
-8. Do NOT output comments, markdown fences, or conversational text. Output ONLY pure raw JSON.";
+8. If user asks to enable or activate WhatsApp (e.g. 'with whatsapp', 'enable whatsapp', 'turn on whatsapp'), set whatsAppOptIn to true and add 'whatsAppOptIn' to extractedFields. If user says 'without whatsapp', 'disable whatsapp', 'no whatsapp', set whatsAppOptIn to false and add 'whatsAppOptIn' to extractedFields. Otherwise leave whatsAppOptIn null.
+9. Do NOT output comments, markdown fences, or conversational text. Output ONLY pure raw JSON.";
 
             var requestPayload = new
             {
@@ -645,6 +655,21 @@ Rules:
             {
                 res.MedicalNotes = noteMatch.Groups[1].Value.Trim();
                 res.ExtractedFields.Add("medicalNotes");
+            }
+
+            // 10. WhatsApp Opt-In / Activation Intent Extraction
+            _logger.LogInformation("[AI Intake] Step 10: Evaluating WhatsApp consent intent in text: '{Text}'", text);
+            if (Regex.IsMatch(text, @"\b(enable|activate|turn on|with|yes|active)\s*(whats\s*app|wa)\b|\bwhats\s*app\s*(active|enabled|on|yes)\b", RegexOptions.IgnoreCase))
+            {
+                res.WhatsAppOptIn = true;
+                res.ExtractedFields.Add("whatsAppOptIn");
+                _logger.LogInformation("[AI Intake] Successfully parsed intent: WhatsAppOptIn = TRUE");
+            }
+            else if (Regex.IsMatch(text, @"\b(disable|deactivate|turn off|without|no|off)\s*(whats\s*app|wa)\b|\bwhats\s*app\s*(inactive|disabled|off|no)\b", RegexOptions.IgnoreCase))
+            {
+                res.WhatsAppOptIn = false;
+                res.ExtractedFields.Add("whatsAppOptIn");
+                _logger.LogInformation("[AI Intake] Successfully parsed intent: WhatsAppOptIn = FALSE");
             }
 
             res.Summary = $"Extracted {res.ExtractedFields.Count} patient intake fields.";
@@ -1301,6 +1326,7 @@ Rules:
         public string? NhiNumber { get; set; }
         public string? CurrentTreatmentPlan { get; set; }
         public string? MedicalNotes { get; set; }
+        public bool? WhatsAppOptIn { get; set; }
         public List<string> Allergies { get; set; } = new List<string>();
         public string Summary { get; set; }
         public List<string> ExtractedFields { get; set; } = new List<string>();

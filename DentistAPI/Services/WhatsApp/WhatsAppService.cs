@@ -673,6 +673,13 @@ namespace DentistAPI.Services
 
         public async Task<bool> UpdatePatientOptInStatusAsync(int patientId, bool optIn)
         {
+            var result = await UpdatePatientOptInStatusWithResultAsync(patientId, optIn);
+            return result.Success;
+        }
+
+        public async Task<WhatsAppOptInResult> UpdatePatientOptInStatusWithResultAsync(int patientId, bool optIn)
+        {
+            _logger.LogInformation("[WhatsAppService] Step 1: Initiating WhatsApp opt-in status change to {OptIn} for Patient #{PatientId}", optIn, patientId);
             try
             {
                 using var conn = CreateConnection();
@@ -683,12 +690,196 @@ namespace DentistAPI.Services
                     WHERE PatientID = @PatientID";
 
                 int affected = await conn.ExecuteAsync(sql, new { PatientID = patientId, OptIn = optIn });
-                return affected > 0;
+                if (affected == 0)
+                {
+                    _logger.LogWarning("[WhatsAppService] Patient #{PatientId} was not found to update opt-in status.", patientId);
+                    return new WhatsAppOptInResult { Success = false, PatientId = patientId, OptIn = optIn, Message = "Patient record not found." };
+                }
+
+                _logger.LogInformation("[WhatsAppService] Step 2: Patient #{PatientId} opt-in database record updated to {OptIn}.", patientId, optIn);
+
+                // If patient turned OFF WhatsApp, no retroactive appointment to dispatch
+                if (!optIn)
+                {
+                    _logger.LogInformation("[WhatsAppService] Patient #{PatientId} opted out of WhatsApp updates.", patientId);
+                    return new WhatsAppOptInResult 
+                    { 
+                        Success = true, 
+                        PatientId = patientId, 
+                        OptIn = false, 
+                        UpcomingAppointmentQueued = false, 
+                        Message = "Patient opted out of WhatsApp updates." 
+                    };
+                }
+
+                // If patient activated WhatsApp, search for upcoming appointments (Today and Future) for retroactive dispatch
+                _logger.LogInformation("[WhatsAppService] Step 3: Patient #{PatientId} activated WhatsApp. Querying database for upcoming appointments (Today and Future)...", patientId);
+
+                var patient = await conn.QuerySingleOrDefaultAsync<Patient>(
+                    "SELECT TOP 1 * FROM [dentist].[Patients] WHERE PatientID = @PatientId", 
+                    new { PatientId = patientId });
+
+                if (patient == null)
+                {
+                    _logger.LogWarning("[WhatsAppService] Patient #{PatientId} could not be re-queried.", patientId);
+                    return new WhatsAppOptInResult { Success = true, PatientId = patientId, OptIn = true, UpcomingAppointmentQueued = false, Message = "WhatsApp activated." };
+                }
+
+                // Make sure opt-in flag is active in memory for queue method
+                patient.WhatsAppOptIn = true;
+
+                string upcomingSql = @"
+                    SELECT TOP 1 * 
+                    FROM [dentist].[Appointments]
+                    WHERE PatientID = @PatientId
+                      AND Status IN ('Pending', 'Confirmed')
+                      AND PreferredDate >= CAST(GETUTCDATE() AS DATE)
+                    ORDER BY PreferredDate ASC";
+
+                var upcomingAppt = await conn.QuerySingleOrDefaultAsync<Appointment>(upcomingSql, new { PatientId = patientId });
+
+                if (upcomingAppt == null)
+                {
+                    _logger.LogInformation("[WhatsAppService] Step 4: No upcoming appointments found for Patient #{PatientId}. No retroactive message needed.", patientId);
+                    return new WhatsAppOptInResult 
+                    { 
+                        Success = true, 
+                        PatientId = patientId, 
+                        OptIn = true, 
+                        UpcomingAppointmentQueued = false, 
+                        Message = "Patient opted in for WhatsApp updates. No upcoming appointments pending." 
+                    };
+                }
+
+                _logger.LogInformation("[WhatsAppService] Step 4: Found upcoming appointment #{AppointmentId} scheduled on {PreferredDate:u} for Patient #{PatientId}", 
+                    upcomingAppt.AppointmentID, upcomingAppt.PreferredDate, patientId);
+
+                // Check if a confirmation message was already queued or sent recently
+                int existingCount = await conn.ExecuteScalarAsync<int>(@"
+                    IF OBJECT_ID('[dentist].[WhatsAppMessages]', 'U') IS NOT NULL
+                        SELECT COUNT(*) FROM [dentist].[WhatsAppMessages]
+                        WHERE AppointmentID = @AppointmentId
+                          AND Status IN ('Pending', 'Queued', 'Sending', 'Sent', 'Delivered')
+                    ELSE
+                        SELECT 0",
+                    new { AppointmentId = upcomingAppt.AppointmentID });
+                bool alreadyQueued = existingCount > 0;
+
+                if (alreadyQueued)
+                {
+                    _logger.LogInformation("[WhatsAppService] Appointment #{AppointmentId} already has an active or sent WhatsApp message. Skipping duplicate.", upcomingAppt.AppointmentID);
+                    return new WhatsAppOptInResult
+                    {
+                        Success = true,
+                        PatientId = patientId,
+                        OptIn = true,
+                        UpcomingAppointmentQueued = false,
+                        QueuedAppointmentId = upcomingAppt.AppointmentID,
+                        QueuedAppointmentDate = upcomingAppt.PreferredDate,
+                        Message = $"WhatsApp activated. Appointment on {upcomingAppt.PreferredDate:MMM dd, yyyy} was already confirmed previously."
+                    };
+                }
+
+                // Fetch Doctor if assigned
+                Doctor? doctor = null;
+                if (upcomingAppt.DoctorID.HasValue && upcomingAppt.DoctorID.Value > 0)
+                {
+                    doctor = await conn.QuerySingleOrDefaultAsync<Doctor>(
+                        "SELECT TOP 1 * FROM [dentist].[Doctors] WHERE DoctorID = @DoctorId",
+                        new { DoctorId = upcomingAppt.DoctorID.Value });
+                }
+
+                _logger.LogInformation("[WhatsAppService] Step 5: Queuing retroactive confirmation for appointment #{AppointmentId} to recipient '{Phone}'...", 
+                    upcomingAppt.AppointmentID, patient.Phone);
+
+                int messageId = await QueueAppointmentConfirmationAsync(upcomingAppt, patient, doctor);
+
+                _logger.LogInformation("[WhatsAppService] Step 6: Retroactive WhatsApp message #{MessageId} created successfully for appointment #{AppointmentId}.", 
+                    messageId, upcomingAppt.AppointmentID);
+
+                return new WhatsAppOptInResult
+                {
+                    Success = true,
+                    PatientId = patientId,
+                    OptIn = true,
+                    UpcomingAppointmentQueued = messageId > 0,
+                    QueuedAppointmentId = upcomingAppt.AppointmentID,
+                    QueuedAppointmentDate = upcomingAppt.PreferredDate,
+                    Message = messageId > 0 
+                        ? $"WhatsApp activated! Confirmation queued for upcoming appointment on {upcomingAppt.PreferredDate:dddd, MMM dd}."
+                        : "WhatsApp activated successfully."
+                };
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to update WhatsAppOptIn for Patient #{PatientId}", patientId);
-                return false;
+                _logger.LogError(ex, "[WhatsAppService] Error updating WhatsAppOptIn status for Patient #{PatientId}", patientId);
+                return new WhatsAppOptInResult { Success = false, PatientId = patientId, OptIn = optIn, Message = $"Error: {ex.Message}" };
+            }
+        }
+
+        public async Task<int> ResendAppointmentConfirmationAsync(int appointmentId)
+        {
+            _logger.LogInformation("[WhatsAppService] Step 1: Manual resend triggered for appointment #{AppointmentId}", appointmentId);
+            try
+            {
+                using var conn = CreateConnection();
+                var appt = await conn.QuerySingleOrDefaultAsync<Appointment>(
+                    "SELECT TOP 1 * FROM [dentist].[Appointments] WHERE AppointmentID = @AppointmentId",
+                    new { AppointmentId = appointmentId });
+
+                if (appt == null)
+                {
+                    _logger.LogWarning("[WhatsAppService] Resend failed: Appointment #{AppointmentId} not found.", appointmentId);
+                    return 0;
+                }
+
+                Patient? patient = null;
+                if (appt.PatientID.HasValue && appt.PatientID.Value > 0)
+                {
+                    patient = await conn.QuerySingleOrDefaultAsync<Patient>(
+                        "SELECT TOP 1 * FROM [dentist].[Patients] WHERE PatientID = @PatientId",
+                        new { PatientId = appt.PatientID.Value });
+                }
+
+                if (patient == null)
+                {
+                    if (string.IsNullOrWhiteSpace(appt.Phone))
+                    {
+                        _logger.LogWarning("[WhatsAppService] Resend failed: No phone number associated with appointment #{AppointmentId}.", appointmentId);
+                        return 0;
+                    }
+
+                    patient = new Patient
+                    {
+                        FirstName = appt.FullName?.Split(' ').FirstOrDefault() ?? "Patient",
+                        LastName = appt.FullName?.Split(' ').Skip(1).FirstOrDefault() ?? "",
+                        Phone = appt.Phone,
+                        WhatsAppOptIn = true
+                    };
+                }
+
+                // Enforce WhatsApp OptIn for resend
+                patient.WhatsAppOptIn = true;
+
+                Doctor? doctor = null;
+                if (appt.DoctorID.HasValue && appt.DoctorID.Value > 0)
+                {
+                    doctor = await conn.QuerySingleOrDefaultAsync<Doctor>(
+                        "SELECT TOP 1 * FROM [dentist].[Doctors] WHERE DoctorID = @DoctorId",
+                        new { DoctorId = appt.DoctorID.Value });
+                }
+
+                _logger.LogInformation("[WhatsAppService] Step 2: Queuing confirmation message for Appointment #{AppointmentId} to recipient '{Phone}'...", 
+                    appointmentId, patient.Phone);
+
+                int messageId = await QueueAppointmentConfirmationAsync(appt, patient, doctor);
+                _logger.LogInformation("[WhatsAppService] Step 3: Resend queued successfully with MessageID #{MessageId}", messageId);
+                return messageId;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[WhatsAppService] Error resending appointment confirmation for #{AppointmentId}", appointmentId);
+                return 0;
             }
         }
 

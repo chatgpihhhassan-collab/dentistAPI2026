@@ -61,7 +61,7 @@ namespace DentistAPI.Models
         public bool IsPortalActive { get; set; } = true;
         public DateTime? LastLoginAt { get; set; }
         public bool MustChangePassword { get; set; } = false;
-        public bool WhatsAppOptIn { get; set; } = true;
+        public bool WhatsAppOptIn { get; set; } = false;
         public DateTime? WhatsAppOptInAt { get; set; }
         public DateTime? WhatsAppLastNotifiedAt { get; set; }
         public DateTime CreatedAt { get; set; }
@@ -129,6 +129,9 @@ namespace DentistAPI.Models
         public string? InvoiceNumber { get; set; }
         public string? InvoiceStatus { get; set; }
         public string? PaymentMethod { get; set; }
+        public string? WhatsAppStatus { get; set; }
+        public DateTime? WhatsAppSentAt { get; set; }
+        public bool? WhatsAppOptIn { get; set; }
         public System.Collections.Generic.List<InvoiceItem> Items { get; set; } = new();
     }
 

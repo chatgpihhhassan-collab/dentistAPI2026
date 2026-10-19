@@ -172,4 +172,18 @@ namespace DentistAPI.Models
         public string? ErrorMessage { get; set; }
         public bool FallbackToEmailTriggered { get; set; }
     }
+
+    /// <summary>
+    /// Result payload for updating patient opt-in, including retroactive appointment queue details
+    /// </summary>
+    public class WhatsAppOptInResult
+    {
+        public bool Success { get; set; }
+        public int PatientId { get; set; }
+        public bool OptIn { get; set; }
+        public bool UpcomingAppointmentQueued { get; set; }
+        public int? QueuedAppointmentId { get; set; }
+        public DateTime? QueuedAppointmentDate { get; set; }
+        public string Message { get; set; } = string.Empty;
+    }
 }

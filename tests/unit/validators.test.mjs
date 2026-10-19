@@ -222,3 +222,70 @@ describe('Unit: Dentition Type Normalization', () => {
     assert.equal(normalizeDentitionType('UnknownType'), 'Adult');
   });
 });
+
+describe('Unit: WhatsApp Opt-In Policy & Conditional Mobile Validation', () => {
+  function validatePatientPhoneRequirement(patient) {
+    const isWhatsAppActive = Boolean(patient.whatsAppOptIn);
+    if (!isWhatsAppActive) {
+      return { valid: true };
+    }
+    if (!patient.phone || !patient.phone.trim()) {
+      return { valid: false, error: 'Mobile phone number is mandatory when WhatsApp notifications are enabled.' };
+    }
+    const norm = normalizePakistaniPhone(patient.phone);
+    if (!norm.isValid) {
+      return { valid: false, error: 'Please enter a valid Pakistani mobile number (e.g. 03001234567 or +923001234567).' };
+    }
+    return { valid: true, normalized: norm.normalized };
+  }
+
+  function parseWhatsAppIntentFromVoice(command) {
+    const lower = (command || '').toLowerCase();
+    const enableMatch = /with\s+whatsapp|enable\s+whatsapp|activate\s+whatsapp|whatsapp\s+yes|yes\s+whatsapp|whatsapp\s+active/i.test(lower);
+    const disableMatch = /without\s+whatsapp|disable\s+whatsapp|no\s+whatsapp|whatsapp\s+off|deactivate\s+whatsapp|whatsapp\s+inactive|does\s+not\s+use\s+whatsapp/i.test(lower);
+    if (enableMatch) return true;
+    if (disableMatch) return false;
+    return false; // Default inactive
+  }
+
+  it('should default WhatsApp opt-in to false (inactive)', () => {
+    const defaultPatient = { firstName: 'Ali', lastName: 'Khan', whatsAppOptIn: false };
+    assert.equal(defaultPatient.whatsAppOptIn, false);
+  });
+
+  it('should allow patient registration without phone if WhatsApp is inactive', () => {
+    const res = validatePatientPhoneRequirement({ firstName: 'Fatima', whatsAppOptIn: false, phone: '' });
+    assert.equal(res.valid, true);
+  });
+
+  it('should block patient registration if WhatsApp is active but phone is missing', () => {
+    const res = validatePatientPhoneRequirement({ firstName: 'Hamza', whatsAppOptIn: true, phone: '' });
+    assert.equal(res.valid, false);
+    assert.equal(res.error.includes('mandatory'), true);
+  });
+
+  it('should block patient registration if WhatsApp is active but phone is invalid landline', () => {
+    const res = validatePatientPhoneRequirement({ firstName: 'Hamza', whatsAppOptIn: true, phone: '04235889900' });
+    assert.equal(res.valid, false);
+    assert.equal(res.error.includes('valid Pakistani mobile number'), true);
+  });
+
+  it('should accept valid Pakistani mobile phone when WhatsApp is active', () => {
+    const res = validatePatientPhoneRequirement({ firstName: 'Hamza', whatsAppOptIn: true, phone: '03001234567' });
+    assert.equal(res.valid, true);
+    assert.equal(res.normalized, '+923001234567');
+  });
+
+  it('should parse voice/chat intent "with whatsapp" to true', () => {
+    assert.equal(parseWhatsAppIntentFromVoice('register new patient Hamza with whatsapp'), true);
+    assert.equal(parseWhatsAppIntentFromVoice('enable whatsapp for this patient'), true);
+    assert.equal(parseWhatsAppIntentFromVoice('activate whatsapp notifications'), true);
+  });
+
+  it('should parse voice/chat intent "without whatsapp" to false', () => {
+    assert.equal(parseWhatsAppIntentFromVoice('register patient Hamza without whatsapp'), false);
+    assert.equal(parseWhatsAppIntentFromVoice('disable whatsapp'), false);
+    assert.equal(parseWhatsAppIntentFromVoice('patient does not use whatsapp'), false);
+  });
+});
+

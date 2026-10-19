@@ -752,7 +752,7 @@ namespace DentistAPI.Repositories
                 query = @"
                     INSERT INTO [dentist].[Patients] (DoctorID, FirstName, LastName, DOB, Phone, NHINumber, Address, Email, Gender, Region, DentitionType, CurrentTreatmentPlan, TreatmentStage, TargetShade, ProfileImage, ProfileImageMimeType, ReferenceNumber, PasswordHash, IsPortalActive, WhatsAppOptIn, WhatsAppOptInAt, CreatedAt)
                     OUTPUT INSERTED.PatientID
-                    VALUES (@DoctorID, @FirstName, @LastName, @DOB, @Phone, @NHINumber, @Address, @Email, @Gender, @Region, COALESCE(@DentitionType, 'Adult'), @CurrentTreatmentPlan, @TreatmentStage, @TargetShade, @ProfileImage, @ProfileImageMimeType, @ReferenceNumber, @PasswordHash, COALESCE(@IsPortalActive, 1), COALESCE(@WhatsAppOptIn, 1), CASE WHEN @WhatsAppOptIn = 1 THEN SYSUTCDATETIME() ELSE NULL END, GETDATE())";
+                    VALUES (@DoctorID, @FirstName, @LastName, @DOB, @Phone, @NHINumber, @Address, @Email, @Gender, @Region, COALESCE(@DentitionType, 'Adult'), @CurrentTreatmentPlan, @TreatmentStage, @TargetShade, @ProfileImage, @ProfileImageMimeType, @ReferenceNumber, @PasswordHash, COALESCE(@IsPortalActive, 1), COALESCE(@WhatsAppOptIn, 0), CASE WHEN @WhatsAppOptIn = 1 THEN SYSUTCDATETIME() ELSE NULL END, GETDATE())";
             }
             else
             {

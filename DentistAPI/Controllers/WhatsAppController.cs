@@ -95,29 +95,57 @@ namespace DentistAPI.Controllers
         }
 
         /// <summary>
-        /// Toggles a patient's WhatsApp opt-in status.
+        /// Toggles a patient's WhatsApp opt-in status and dispatches retroactive appointment confirmation if activated.
         /// </summary>
         [HttpPut("patients/{patientId:int}/opt-in")]
+        [HttpPatch("patients/{patientId:int}/opt-in")]
         public async Task<IActionResult> UpdatePatientOptIn(int patientId, [FromBody] UpdateOptInRequest request)
         {
+            _logger.LogInformation("[WhatsAppController] Received opt-in update request for Patient #{PatientId}: OptIn={OptIn}", patientId, request?.OptIn);
             if (request == null)
             {
+                _logger.LogWarning("[WhatsAppController] Opt-in payload is null for Patient #{PatientId}", patientId);
                 return BadRequest(new { message = "Opt-in state payload required." });
             }
 
             var patient = await _dentalRepository.GetPatientByIdAsync(patientId);
             if (patient == null)
             {
+                _logger.LogWarning("[WhatsAppController] Patient #{PatientId} not found.", patientId);
                 return NotFound(new { message = "Patient not found." });
             }
 
-            bool updated = await _whatsAppService.UpdatePatientOptInStatusAsync(patientId, request.OptIn);
+            var result = await _whatsAppService.UpdatePatientOptInStatusWithResultAsync(patientId, request.OptIn);
+            _logger.LogInformation("[WhatsAppController] Opt-in result for Patient #{PatientId}: Success={Success}, UpcomingAppointmentQueued={Queued}", 
+                patientId, result.Success, result.UpcomingAppointmentQueued);
+
             return Ok(new { 
-                success = updated, 
-                patientId, 
-                whatsAppOptIn = request.OptIn,
-                message = request.OptIn ? "Patient opted in for WhatsApp updates." : "Patient opted out of WhatsApp updates."
+                success = result.Success, 
+                patientId = result.PatientId, 
+                whatsAppOptIn = result.OptIn,
+                upcomingAppointmentQueued = result.UpcomingAppointmentQueued,
+                queuedAppointmentId = result.QueuedAppointmentId,
+                queuedAppointmentDate = result.QueuedAppointmentDate,
+                message = result.Message
             });
+        }
+
+        /// <summary>
+        /// Manually resends the WhatsApp appointment confirmation to the patient.
+        /// </summary>
+        [HttpPost("appointments/{appointmentId:int}/resend")]
+        public async Task<IActionResult> ResendAppointmentConfirmation(int appointmentId)
+        {
+            _logger.LogInformation("[WhatsAppController] Received manual resend request for Appointment #{AppointmentId}", appointmentId);
+            int messageId = await _whatsAppService.ResendAppointmentConfirmationAsync(appointmentId);
+            if (messageId > 0)
+            {
+                _logger.LogInformation("[WhatsAppController] Resend successful for Appointment #{AppointmentId}. MessageID: {MessageId}", appointmentId, messageId);
+                return Ok(new { success = true, appointmentId, messageId, message = "WhatsApp confirmation queued successfully." });
+            }
+
+            _logger.LogWarning("[WhatsAppController] Resend could not be completed for Appointment #{AppointmentId}", appointmentId);
+            return BadRequest(new { success = false, appointmentId, message = "Could not queue WhatsApp reminder. Please check patient phone and WhatsApp opt-in status." });
         }
 
         /// <summary>

@@ -180,6 +180,9 @@ namespace DentistAPI.Controllers
                             a.Reason,
                             a.Notes,
                             a.DoctorID,
+                            p.WhatsAppOptIn,
+                            wa.Status AS WhatsAppStatus,
+                            wa.SentAt AS WhatsAppSentAt,
                             i.InvoiceNumber,
                             i.TotalAmount,
                             i.Currency,
@@ -187,6 +190,12 @@ namespace DentistAPI.Controllers
                             pay.PaymentMethod
                         FROM [dentist].[Appointments] a
                         LEFT JOIN [dentist].[Patients] p ON p.PatientID = a.PatientID
+                        OUTER APPLY (
+                            SELECT TOP 1 m.Status, m.SentAt 
+                            FROM [dentist].[WhatsAppMessages] m
+                            WHERE m.AppointmentID = a.AppointmentID 
+                            ORDER BY m.MessageID DESC
+                        ) wa
                         LEFT JOIN [dentist].[Invoices] i ON i.AppointmentID = a.AppointmentID
                         LEFT JOIN (
                             SELECT InvoiceID, MAX(PaymentMethod) as PaymentMethod 
@@ -199,6 +208,14 @@ namespace DentistAPI.Controllers
                         ORDER BY a.PreferredDate ASC";
 
                     var appointments = (await conn.QueryAsync<Appointment>(query, new { DoctorId = doctorId })).ToList();
+                    foreach (var appt in appointments)
+                    {
+                        if (string.IsNullOrEmpty(appt.WhatsAppStatus) && appt.WhatsAppOptIn == false)
+                        {
+                            appt.WhatsAppStatus = "Skipped_NoOptIn";
+                        }
+                    }
+                    _logger.LogInformation("[AppointmentsController] Fetched {Count} appointments with WhatsApp telemetry for Doctor #{DoctorId}", appointments.Count, doctorId);
 
                     if (appointments.Any())
                     {

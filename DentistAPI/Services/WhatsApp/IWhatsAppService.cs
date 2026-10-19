@@ -48,6 +48,16 @@ namespace DentistAPI.Services
         Task<bool> UpdatePatientOptInStatusAsync(int patientId, bool optIn);
 
         /// <summary>
+        /// Updates patient WhatsApp opt-in state, and if activated, checks for and retroactively queues upcoming appointment confirmations.
+        /// </summary>
+        Task<WhatsAppOptInResult> UpdatePatientOptInStatusWithResultAsync(int patientId, bool optIn);
+
+        /// <summary>
+        /// Manually resends or re-queues an appointment confirmation message on WhatsApp.
+        /// </summary>
+        Task<int> ResendAppointmentConfirmationAsync(int appointmentId);
+
+        /// <summary>
         /// Processes webhook events received from OpenWA with HMAC verification.
         /// </summary>
         Task<bool> ProcessIncomingWebhookAsync(OpenWAWebhookPayload payload);
