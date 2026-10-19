@@ -24,6 +24,19 @@ builder.Services.AddHttpClient("", client =>
 builder.Services.AddScoped<DentalRepository>();
 builder.Services.AddScoped<IAIDentalNotesRepository, AIDentalNotesRepository>();
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IDataNormalizationService, DataNormalizationService>();
+
+// Register WhatsApp OpenWA Service & Background Queue Processor
+builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>(client =>
+{
+    var baseUrl = Environment.GetEnvironmentVariable("OPENWA_BASE_URL") 
+                  ?? builder.Configuration["OpenWA:BaseUrl"] 
+                  ?? "http://localhost:2785";
+    client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddScoped<WhatsAppService>();
+builder.Services.AddHostedService<WhatsAppBackgroundQueueService>();
 
 var useMockSpeech = builder.Configuration.GetValue<bool>("UseMockSpeechToText", false);
 if (useMockSpeech)

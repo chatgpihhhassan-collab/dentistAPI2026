@@ -742,33 +742,94 @@ namespace DentistAPI.Repositories
                 patient.ReferenceNumber = $"DEN-{year}-{maxId:D5}";
             }
 
-            string query = @"
-                INSERT INTO [dentist].[Patients] (DoctorID, FirstName, LastName, DOB, Phone, NHINumber, Address, Email, Gender, Region, DentitionType, CurrentTreatmentPlan, TreatmentStage, TargetShade, ProfileImage, ProfileImageMimeType, ReferenceNumber, PasswordHash, IsPortalActive, CreatedAt)
-                OUTPUT INSERTED.PatientID
-                VALUES (@DoctorID, @FirstName, @LastName, @DOB, @Phone, @NHINumber, @Address, @Email, @Gender, @Region, COALESCE(@DentitionType, 'Adult'), @CurrentTreatmentPlan, @TreatmentStage, @TargetShade, @ProfileImage, @ProfileImageMimeType, @ReferenceNumber, @PasswordHash, COALESCE(@IsPortalActive, 1), GETDATE())";
+            bool hasWhatsAppCol = await connection.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(*) FROM sys.columns 
+                WHERE object_id = OBJECT_ID(N'[dentist].[Patients]') AND name = N'WhatsAppOptIn'") > 0;
+
+            string query;
+            if (hasWhatsAppCol)
+            {
+                query = @"
+                    INSERT INTO [dentist].[Patients] (DoctorID, FirstName, LastName, DOB, Phone, NHINumber, Address, Email, Gender, Region, DentitionType, CurrentTreatmentPlan, TreatmentStage, TargetShade, ProfileImage, ProfileImageMimeType, ReferenceNumber, PasswordHash, IsPortalActive, WhatsAppOptIn, WhatsAppOptInAt, CreatedAt)
+                    OUTPUT INSERTED.PatientID
+                    VALUES (@DoctorID, @FirstName, @LastName, @DOB, @Phone, @NHINumber, @Address, @Email, @Gender, @Region, COALESCE(@DentitionType, 'Adult'), @CurrentTreatmentPlan, @TreatmentStage, @TargetShade, @ProfileImage, @ProfileImageMimeType, @ReferenceNumber, @PasswordHash, COALESCE(@IsPortalActive, 1), COALESCE(@WhatsAppOptIn, 1), CASE WHEN @WhatsAppOptIn = 1 THEN SYSUTCDATETIME() ELSE NULL END, GETDATE())";
+            }
+            else
+            {
+                query = @"
+                    INSERT INTO [dentist].[Patients] (DoctorID, FirstName, LastName, DOB, Phone, NHINumber, Address, Email, Gender, Region, DentitionType, CurrentTreatmentPlan, TreatmentStage, TargetShade, ProfileImage, ProfileImageMimeType, ReferenceNumber, PasswordHash, IsPortalActive, CreatedAt)
+                    OUTPUT INSERTED.PatientID
+                    VALUES (@DoctorID, @FirstName, @LastName, @DOB, @Phone, @NHINumber, @Address, @Email, @Gender, @Region, COALESCE(@DentitionType, 'Adult'), @CurrentTreatmentPlan, @TreatmentStage, @TargetShade, @ProfileImage, @ProfileImageMimeType, @ReferenceNumber, @PasswordHash, COALESCE(@IsPortalActive, 1), GETDATE())";
+            }
             return await connection.QuerySingleAsync<int>(query, patient);
         }
 
         public async Task<int> UpdatePatientAsync(Patient patient)
         {
             using var connection = CreateConnection();
+            bool hasWhatsAppCol = await connection.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(*) FROM sys.columns 
+                WHERE object_id = OBJECT_ID(N'[dentist].[Patients]') AND name = N'WhatsAppOptIn'") > 0;
+
+            string query;
+            if (hasWhatsAppCol)
+            {
+                query = @"
+                    UPDATE [dentist].[Patients]
+                    SET FirstName = @FirstName,
+                        LastName = @LastName,
+                        DOB = @DOB,
+                        Phone = @Phone,
+                        NHINumber = @NHINumber,
+                        Address = @Address,
+                        Email = @Email,
+                        Gender = @Gender,
+                        Region = @Region,
+                        DentitionType = COALESCE(@DentitionType, DentitionType),
+                        CurrentTreatmentPlan = COALESCE(@CurrentTreatmentPlan, CurrentTreatmentPlan),
+                        ProfileImage = COALESCE(@ProfileImage, ProfileImage),
+                        ProfileImageMimeType = COALESCE(@ProfileImageMimeType, ProfileImageMimeType),
+                        WhatsAppOptIn = COALESCE(@WhatsAppOptIn, WhatsAppOptIn),
+                        WhatsAppOptInAt = CASE WHEN @WhatsAppOptIn = 1 AND WhatsAppOptIn = 0 THEN SYSUTCDATETIME() ELSE WhatsAppOptInAt END
+                    WHERE PatientID = @PatientID";
+            }
+            else
+            {
+                query = @"
+                    UPDATE [dentist].[Patients]
+                    SET FirstName = @FirstName,
+                        LastName = @LastName,
+                        DOB = @DOB,
+                        Phone = @Phone,
+                        NHINumber = @NHINumber,
+                        Address = @Address,
+                        Email = @Email,
+                        Gender = @Gender,
+                        Region = @Region,
+                        DentitionType = COALESCE(@DentitionType, DentitionType),
+                        CurrentTreatmentPlan = COALESCE(@CurrentTreatmentPlan, CurrentTreatmentPlan),
+                        ProfileImage = COALESCE(@ProfileImage, ProfileImage),
+                        ProfileImageMimeType = COALESCE(@ProfileImageMimeType, ProfileImageMimeType)
+                    WHERE PatientID = @PatientID";
+            }
+            return await connection.ExecuteAsync(query, patient);
+        }
+
+        public async Task<int> UpdatePatientWhatsAppOptInAsync(int patientId, bool optIn)
+        {
+            using var connection = CreateConnection();
+            bool hasWhatsAppCol = await connection.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(*) FROM sys.columns 
+                WHERE object_id = OBJECT_ID(N'[dentist].[Patients]') AND name = N'WhatsAppOptIn'") > 0;
+
+            if (!hasWhatsAppCol) return 0;
+
             string query = @"
                 UPDATE [dentist].[Patients]
-                SET FirstName = @FirstName,
-                    LastName = @LastName,
-                    DOB = @DOB,
-                    Phone = @Phone,
-                    NHINumber = @NHINumber,
-                    Address = @Address,
-                    Email = @Email,
-                    Gender = @Gender,
-                    Region = @Region,
-                    DentitionType = COALESCE(@DentitionType, DentitionType),
-                    CurrentTreatmentPlan = COALESCE(@CurrentTreatmentPlan, CurrentTreatmentPlan),
-                    ProfileImage = COALESCE(@ProfileImage, ProfileImage),
-                    ProfileImageMimeType = COALESCE(@ProfileImageMimeType, ProfileImageMimeType)
+                SET WhatsAppOptIn = @OptIn,
+                    WhatsAppOptInAt = CASE WHEN @OptIn = 1 THEN SYSUTCDATETIME() ELSE WhatsAppOptInAt END
                 WHERE PatientID = @PatientID";
-            return await connection.ExecuteAsync(query, patient);
+            return await connection.ExecuteAsync(query, new { PatientID = patientId, OptIn = optIn });
         }
 
         public async Task<int> UpdatePatientProfileImageAsync(int patientId, byte[] profileImage, string mimeType)

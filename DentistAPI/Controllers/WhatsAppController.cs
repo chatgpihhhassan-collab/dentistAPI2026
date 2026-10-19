@@ -1,0 +1,150 @@
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
+using DentistAPI.Models;
+using DentistAPI.Services;
+using DentistAPI.Repositories;
+using Microsoft.Extensions.Logging;
+
+namespace DentistAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class WhatsAppController : ControllerBase
+    {
+        private readonly IWhatsAppService _whatsAppService;
+        private readonly DentalRepository _dentalRepository;
+        private readonly ILogger<WhatsAppController> _logger;
+
+        public WhatsAppController(
+            IWhatsAppService whatsAppService,
+            DentalRepository dentalRepository,
+            ILogger<WhatsAppController> logger)
+        {
+            _whatsAppService = whatsAppService;
+            _dentalRepository = dentalRepository;
+            _logger = logger;
+        }
+
+        /// <summary>
+        /// Retrieves the live session connection status, battery, and queue telemetry.
+        /// </summary>
+        [HttpGet("status")]
+        public async Task<IActionResult> GetStatus()
+        {
+            var status = await _whatsAppService.GetSessionStatusAsync();
+            return Ok(status);
+        }
+
+        /// <summary>
+        /// Retrieves the pairing QR code from OpenWA.
+        /// </summary>
+        [HttpGet("qr")]
+        public async Task<IActionResult> GetQRCode()
+        {
+            var qr = await _whatsAppService.GetQRCodeAsync();
+            if (string.IsNullOrEmpty(qr))
+            {
+                return Ok(new { qr = (string?)null, message = "No active QR code required or session already linked." });
+            }
+            return Ok(new { qr });
+        }
+
+        /// <summary>
+        /// Starts or initializes the OpenWA session.
+        /// </summary>
+        [HttpPost("start")]
+        public async Task<IActionResult> StartSession()
+        {
+            bool success = await _whatsAppService.StartSessionAsync();
+            return Ok(new { success, message = success ? "Session start signal sent successfully." : "Failed to trigger session start." });
+        }
+
+        /// <summary>
+        /// Fetches the recent outbound/inbound WhatsApp messages with optional status filter.
+        /// </summary>
+        [HttpGet("logs")]
+        public async Task<IActionResult> GetLogs([FromQuery] int limit = 50, [FromQuery] string? status = null)
+        {
+            if (limit <= 0 || limit > 200) limit = 50;
+            var logs = await _whatsAppService.GetRecentMessageLogsAsync(limit, status);
+            return Ok(logs);
+        }
+
+        /// <summary>
+        /// Dispatches a manual test WhatsApp message from the Admin dashboard.
+        /// </summary>
+        [HttpPost("test-send")]
+        public async Task<IActionResult> TestSend([FromBody] SendWhatsAppTestRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Phone))
+            {
+                return BadRequest(new { message = "Recipient phone number is required." });
+            }
+
+            string testText = !string.IsNullOrWhiteSpace(request.Message)
+                ? request.Message.Trim()
+                : "🦷 *Dentia Dental Hospital Test Alert*\nThis is a verification message sent from the Dentia Clinical WhatsApp Gateway via OpenWA.\nTime: " + DateTime.UtcNow.ToString("g") + " UTC";
+
+            var result = await _whatsAppService.SendTextAsync(request.Phone, testText, "ManualTest");
+            if (result.Success)
+            {
+                return Ok(new { success = true, result });
+            }
+            return BadRequest(new { success = false, message = result.ErrorMessage, result });
+        }
+
+        /// <summary>
+        /// Toggles a patient's WhatsApp opt-in status.
+        /// </summary>
+        [HttpPut("patients/{patientId:int}/opt-in")]
+        public async Task<IActionResult> UpdatePatientOptIn(int patientId, [FromBody] UpdateOptInRequest request)
+        {
+            if (request == null)
+            {
+                return BadRequest(new { message = "Opt-in state payload required." });
+            }
+
+            var patient = await _dentalRepository.GetPatientByIdAsync(patientId);
+            if (patient == null)
+            {
+                return NotFound(new { message = "Patient not found." });
+            }
+
+            bool updated = await _whatsAppService.UpdatePatientOptInStatusAsync(patientId, request.OptIn);
+            return Ok(new { 
+                success = updated, 
+                patientId, 
+                whatsAppOptIn = request.OptIn,
+                message = request.OptIn ? "Patient opted in for WhatsApp updates." : "Patient opted out of WhatsApp updates."
+            });
+        }
+
+        /// <summary>
+        /// Gets patient WhatsApp eligibility and normalized direct link.
+        /// </summary>
+        [HttpGet("patients/{patientId:int}/status")]
+        public async Task<IActionResult> GetPatientWhatsAppStatus(int patientId)
+        {
+            var patient = await _dentalRepository.GetPatientByIdAsync(patientId);
+            if (patient == null)
+            {
+                return NotFound(new { message = "Patient not found." });
+            }
+
+            var norm = WhatsAppPhoneNormalizer.NormalizePakistani(patient.Phone);
+            var directChatUrl = norm.IsValid ? WhatsAppPhoneNormalizer.BuildDirectChatUrl(patient.Phone) : null;
+
+            return Ok(new
+            {
+                patientId = patient.PatientID,
+                rawPhone = patient.Phone,
+                normalizedPhone = norm.NormalizedDigits,
+                chatId = norm.ChatId,
+                isValidPhone = norm.IsValid,
+                whatsAppOptIn = patient.WhatsAppOptIn,
+                directChatUrl
+            });
+        }
+    }
+}

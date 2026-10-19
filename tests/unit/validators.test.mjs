@@ -14,7 +14,9 @@ import {
   sanitizeText,
   validateLuhnCardNumber,
   isValidFdiToothNumber,
-  formatCurrencySafe
+  formatCurrencySafe,
+  getWhatsAppChatId,
+  getWhatsAppDirectUrl
 } from '../../Dentistfrontend/src/validators/normalizationUtils.js';
 
 import { EdgeCasePayloads } from '../factories/test_data_factories.mjs';
@@ -67,6 +69,31 @@ describe('Unit: Pakistani Phone Number E.164 Normalization', () => {
     assert.equal(normalizePakistaniPhone('').isValid, false);
     assert.equal(normalizePakistaniPhone('   ').isValid, false);
     assert.equal(normalizePakistaniPhone(null).isValid, false);
+  });
+});
+
+describe('Unit: OpenWA WhatsApp ChatId and Direct URLs', () => {
+  it('should format 03001234567 to 923001234567@c.us', () => {
+    assert.equal(getWhatsAppChatId('03001234567'), '923001234567@c.us');
+  });
+
+  it('should format +923001234567 to 923001234567@c.us', () => {
+    assert.equal(getWhatsAppChatId('+923001234567'), '923001234567@c.us');
+  });
+
+  it('should format punctuated +92 321-4455667 to 923214455667@c.us', () => {
+    assert.equal(getWhatsAppChatId('+92 321-4455667'), '923214455667@c.us');
+  });
+
+  it('should return null for invalid landline or malformed numbers', () => {
+    assert.equal(getWhatsAppChatId('04235889900'), null);
+    assert.equal(getWhatsAppChatId(''), null);
+    assert.equal(getWhatsAppChatId(null), null);
+  });
+
+  it('should generate valid wa.me direct chat link with prefilled text', () => {
+    const url = getWhatsAppDirectUrl('03001234567', 'Hello Dentia');
+    assert.equal(url, 'https://wa.me/923001234567?text=Hello%20Dentia');
   });
 });
 

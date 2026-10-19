@@ -61,6 +61,9 @@ namespace DentistAPI.Models
         public bool IsPortalActive { get; set; } = true;
         public DateTime? LastLoginAt { get; set; }
         public bool MustChangePassword { get; set; } = false;
+        public bool WhatsAppOptIn { get; set; } = true;
+        public DateTime? WhatsAppOptInAt { get; set; }
+        public DateTime? WhatsAppLastNotifiedAt { get; set; }
         public DateTime CreatedAt { get; set; }
     }
 

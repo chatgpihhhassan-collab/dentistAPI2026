@@ -53,3 +53,11 @@ out.txt
 *.zip
 Dentia_Dental_Bridge_Setup/
 DentalBridge.Service/
+
+# OpenWA runtime data & dependencies
+openwa-server/node_modules/
+openwa-server/data/
+openwa-server/dist/
+**/openwa-server/data/
+**/openwa-server/node_modules/
+**/openwa-server/dist/
