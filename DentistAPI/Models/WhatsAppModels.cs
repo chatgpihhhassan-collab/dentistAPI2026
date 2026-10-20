@@ -171,6 +171,7 @@ namespace DentistAPI.Models
         public string? Status { get; set; }
         public string? ErrorMessage { get; set; }
         public bool FallbackToEmailTriggered { get; set; }
+        public string? DirectWhatsAppUrl { get; set; }
     }
 
     /// <summary>

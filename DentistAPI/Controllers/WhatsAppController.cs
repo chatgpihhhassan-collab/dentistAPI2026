@@ -27,6 +27,18 @@ namespace DentistAPI.Controllers
         }
 
         /// <summary>
+        /// Serves the standalone Dentia WhatsApp Hub & Gateway dashboard directly from ASP.NET Core on IIS.
+        /// Resolves https://dentist-api-dev.vitonta.com/whatsapp and /api/whatsapp/hub with HTTP 200 without requiring Node.js.
+        /// </summary>
+        [HttpGet("/whatsapp")]
+        [HttpGet("/api/whatsapp/hub")]
+        [Produces("text/html")]
+        public IActionResult GetWhatsAppHub()
+        {
+            return Content(WhatsAppHubPage.Render(), "text/html", System.Text.Encoding.UTF8);
+        }
+
+        /// <summary>
         /// Retrieves the live session connection status, battery, and queue telemetry.
         /// </summary>
         [HttpGet("status")]
@@ -87,11 +99,13 @@ namespace DentistAPI.Controllers
                 : "🦷 *Dentia Dental Hospital Test Alert*\nThis is a verification message sent from the Dentia Clinical WhatsApp Gateway via OpenWA.\nTime: " + DateTime.UtcNow.ToString("g") + " UTC";
 
             var result = await _whatsAppService.SendTextAsync(request.Phone, testText, "ManualTest");
-            if (result.Success)
-            {
-                return Ok(new { success = true, result });
-            }
-            return BadRequest(new { success = false, message = result.ErrorMessage, result });
+            return Ok(new 
+            { 
+                success = result.Success, 
+                message = result.Success ? "Message dispatched successfully." : result.ErrorMessage, 
+                result, 
+                directWhatsAppUrl = result.DirectWhatsAppUrl 
+            });
         }
 
         /// <summary>

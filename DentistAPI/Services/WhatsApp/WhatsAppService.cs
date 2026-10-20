@@ -246,6 +246,8 @@ namespace DentistAPI.Services
                 };
             }
 
+            string directUrl = norm.IsValid ? $"https://wa.me/{norm.NormalizedDigits}?text={Uri.EscapeDataString(text)}" : string.Empty;
+
             // Insert into queue / audit log
             int messageId = await InsertMessageRecordAsync(new WhatsAppMessageEntity
             {
@@ -293,7 +295,8 @@ namespace DentistAPI.Services
                         Success = true,
                         MessageId = openWaId ?? messageId.ToString(),
                         ChatId = norm.ChatId,
-                        Status = "Sent"
+                        Status = "Sent",
+                        DirectWhatsAppUrl = directUrl
                     };
                 }
                 else
@@ -306,7 +309,8 @@ namespace DentistAPI.Services
                         Success = false,
                         ErrorMessage = errorMsg,
                         ChatId = norm.ChatId,
-                        Status = "Failed"
+                        Status = "Failed",
+                        DirectWhatsAppUrl = directUrl
                     };
                 }
             }
@@ -315,7 +319,7 @@ namespace DentistAPI.Services
                 string friendlyError = ex.Message;
                 if (ex.Message.Contains("refused") || ex.Message.Contains("2785") || ex.InnerException?.Message.Contains("refused") == true)
                 {
-                    friendlyError = "OpenWA Gateway is currently offline or unreachable on port 2785. The notification has been queued and can also be dispatched instantly using 1-click 'Open in WhatsApp' (wa.me).";
+                    friendlyError = "OpenWA Gateway is currently offline or unreachable on port 2785. The notification has been recorded in clinical history and can be dispatched instantly via 1-click 'Open in WhatsApp' (wa.me).";
                 }
                 _logger.LogError(ex, "Failed to send WhatsApp message via OpenWA to {ChatId}: {Error}", norm.ChatId, friendlyError);
                 await UpdateMessageStatusAsync(messageId, "Failed", null, friendlyError, null);
@@ -325,7 +329,8 @@ namespace DentistAPI.Services
                     Success = false,
                     ErrorMessage = friendlyError,
                     ChatId = norm.ChatId,
-                    Status = "Failed"
+                    Status = "Failed",
+                    DirectWhatsAppUrl = directUrl
                 };
             }
         }
