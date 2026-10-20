@@ -379,20 +379,44 @@ namespace DentistAPI.Controllers
                         }
                     }
 
+                    bool hasReasonCol = await conn.ExecuteScalarAsync<int>(@"
+                        SELECT COUNT(*) FROM sys.columns 
+                        WHERE object_id = OBJECT_ID(N'[dentist].[Appointments]') AND name = N'Reason'") > 0;
+
                     string insertSql;
                     if (hasPatientIdCol && patientIdToSave.HasValue)
                     {
-                        insertSql = @"
-                            INSERT INTO [dentist].[Appointments] (FullName, Phone, Email, PreferredDate, Status, DoctorID, PatientID)
-                            VALUES (@FullName, @Phone, @Email, @PreferredDate, 'Pending', @DoctorID, @PatientID);
-                            SELECT SCOPE_IDENTITY();";
+                        if (hasReasonCol)
+                        {
+                            insertSql = @"
+                                INSERT INTO [dentist].[Appointments] (FullName, Phone, Email, PreferredDate, Status, DoctorID, PatientID, Reason)
+                                VALUES (@FullName, @Phone, @Email, @PreferredDate, 'Pending', @DoctorID, @PatientID, @Reason);
+                                SELECT SCOPE_IDENTITY();";
+                        }
+                        else
+                        {
+                            insertSql = @"
+                                INSERT INTO [dentist].[Appointments] (FullName, Phone, Email, PreferredDate, Status, DoctorID, PatientID)
+                                VALUES (@FullName, @Phone, @Email, @PreferredDate, 'Pending', @DoctorID, @PatientID);
+                                SELECT SCOPE_IDENTITY();";
+                        }
                     }
                     else
                     {
-                        insertSql = @"
-                            INSERT INTO [dentist].[Appointments] (FullName, Phone, Email, PreferredDate, Status, DoctorID)
-                            VALUES (@FullName, @Phone, @Email, @PreferredDate, 'Pending', @DoctorID);
-                            SELECT SCOPE_IDENTITY();";
+                        if (hasReasonCol)
+                        {
+                            insertSql = @"
+                                INSERT INTO [dentist].[Appointments] (FullName, Phone, Email, PreferredDate, Status, DoctorID, Reason)
+                                VALUES (@FullName, @Phone, @Email, @PreferredDate, 'Pending', @DoctorID, @Reason);
+                                SELECT SCOPE_IDENTITY();";
+                        }
+                        else
+                        {
+                            insertSql = @"
+                                INSERT INTO [dentist].[Appointments] (FullName, Phone, Email, PreferredDate, Status, DoctorID)
+                                VALUES (@FullName, @Phone, @Email, @PreferredDate, 'Pending', @DoctorID);
+                                SELECT SCOPE_IDENTITY();";
+                        }
                     }
 
                     var cmd = new SqlCommand(insertSql, conn);
@@ -401,6 +425,10 @@ namespace DentistAPI.Controllers
                     cmd.Parameters.AddWithValue("@Email", string.IsNullOrEmpty(appointment.Email) ? (object)DBNull.Value : appointment.Email);
                     cmd.Parameters.AddWithValue("@DoctorID", appointment.DoctorID ?? (object)DBNull.Value);
                     cmd.Parameters.AddWithValue("@PreferredDate", appointment.PreferredDate);
+                    if (hasReasonCol)
+                    {
+                        cmd.Parameters.AddWithValue("@Reason", string.IsNullOrEmpty(appointment.Reason) ? (object)DBNull.Value : appointment.Reason);
+                    }
                     if (hasPatientIdCol && patientIdToSave.HasValue)
                     {
                         cmd.Parameters.AddWithValue("@PatientID", patientIdToSave.Value);

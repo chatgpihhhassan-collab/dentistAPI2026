@@ -115,7 +115,7 @@ namespace DentistAPI.Services
                 payload = JsonSerializer.Deserialize<DoctorTokenPayload>(json);
 
                 if (payload == null) return false;
-                if (payload.Role != "Doctor") return false;
+                if (payload.Role != "Doctor" && payload.Role != "Admin" && payload.Role != "SuperAdmin" && payload.Role != "Receptionist" && payload.Role != "Staff") return false;
                 if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() > payload.ExpiresAt) return false;
 
                 return true;
