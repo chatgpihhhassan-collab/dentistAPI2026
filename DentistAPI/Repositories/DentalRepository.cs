@@ -680,12 +680,19 @@ namespace DentistAPI.Repositories
         public async Task<IEnumerable<Patient>> GetPatientsByDoctorAsync(int doctorId)
         {
             using var connection = CreateConnection();
-            string sql = @"
+            bool hasInvoices = await connection.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(*) FROM sys.tables WHERE object_id = OBJECT_ID(N'[dentist].[Invoices]')") > 0;
+
+            string invoicesClause = hasInvoices 
+                ? "OR EXISTS (SELECT 1 FROM [dentist].[Invoices] i WHERE i.PatientID = p.PatientID AND i.DoctorID = @DoctorID)" 
+                : "";
+
+            string sql = $@"
                 SELECT p.* 
                 FROM [dentist].[Patients] p
                 WHERE p.DoctorID = @DoctorID 
                    OR EXISTS (SELECT 1 FROM [dentist].[Appointments] a WHERE a.PatientID = p.PatientID AND a.DoctorID = @DoctorID)
-                   OR EXISTS (SELECT 1 FROM [dentist].[Invoices] i WHERE i.PatientID = p.PatientID AND i.DoctorID = @DoctorID)
+                   {invoicesClause}
                 ORDER BY p.PatientID DESC";
             return await connection.QueryAsync<Patient>(sql, new { DoctorID = doctorId });
         }

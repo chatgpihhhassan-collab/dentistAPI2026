@@ -167,7 +167,49 @@ namespace DentistAPI.Controllers
                 using (var conn = new SqlConnection(_connectionString))
                 {
                     await conn.OpenAsync();
-                    string query = @"
+                    bool hasWhatsAppTable = await conn.ExecuteScalarAsync<int>(@"
+                        SELECT COUNT(*) FROM sys.tables WHERE object_id = OBJECT_ID(N'[dentist].[WhatsAppMessages]')") > 0;
+
+                    bool hasInvoicesTable = await conn.ExecuteScalarAsync<int>(@"
+                        SELECT COUNT(*) FROM sys.tables WHERE object_id = OBJECT_ID(N'[dentist].[Invoices]')") > 0;
+
+                    bool hasPaymentsTable = await conn.ExecuteScalarAsync<int>(@"
+                        SELECT COUNT(*) FROM sys.tables WHERE object_id = OBJECT_ID(N'[dentist].[Payments]')") > 0;
+
+                    string waApply = hasWhatsAppTable ? @"
+                        OUTER APPLY (
+                            SELECT TOP 1 m.Status, m.SentAt 
+                            FROM [dentist].[WhatsAppMessages] m
+                            WHERE m.AppointmentID = a.AppointmentID 
+                            ORDER BY m.MessageID DESC
+                        ) wa" : @"
+                        OUTER APPLY (
+                            SELECT CAST(NULL AS NVARCHAR(50)) AS Status, CAST(NULL AS DATETIME2) AS SentAt
+                        ) wa";
+
+                    string invApply = hasInvoicesTable ? @"
+                        OUTER APPLY (
+                            SELECT TOP 1 i.InvoiceID, i.InvoiceNumber, i.TotalAmount, i.Currency, i.Status
+                            FROM [dentist].[Invoices] i
+                            WHERE i.AppointmentID = a.AppointmentID
+                            ORDER BY i.InvoiceID DESC
+                        ) inv" : @"
+                        OUTER APPLY (
+                            SELECT CAST(NULL AS BIGINT) AS InvoiceID, CAST(NULL AS NVARCHAR(50)) AS InvoiceNumber, CAST(NULL AS DECIMAL(18,2)) AS TotalAmount, CAST(NULL AS NVARCHAR(10)) AS Currency, CAST(NULL AS NVARCHAR(30)) AS Status
+                        ) inv";
+
+                    string payApply = (hasPaymentsTable && hasInvoicesTable) ? @"
+                        OUTER APPLY (
+                            SELECT TOP 1 paym.PaymentMethod 
+                            FROM [dentist].[Payments] paym
+                            WHERE paym.InvoiceID = inv.InvoiceID
+                            ORDER BY paym.PaymentID DESC
+                        ) pay" : @"
+                        OUTER APPLY (
+                            SELECT CAST(NULL AS NVARCHAR(50)) AS PaymentMethod
+                        ) pay";
+
+                    string query = $@"
                         SELECT 
                             a.AppointmentID,
                             a.PatientID,
@@ -190,24 +232,9 @@ namespace DentistAPI.Controllers
                             pay.PaymentMethod
                         FROM [dentist].[Appointments] a
                         LEFT JOIN [dentist].[Patients] p ON p.PatientID = a.PatientID
-                        OUTER APPLY (
-                            SELECT TOP 1 m.Status, m.SentAt 
-                            FROM [dentist].[WhatsAppMessages] m
-                            WHERE m.AppointmentID = a.AppointmentID 
-                            ORDER BY m.MessageID DESC
-                        ) wa
-                        OUTER APPLY (
-                            SELECT TOP 1 i.InvoiceID, i.InvoiceNumber, i.TotalAmount, i.Currency, i.Status
-                            FROM [dentist].[Invoices] i
-                            WHERE i.AppointmentID = a.AppointmentID
-                            ORDER BY i.InvoiceID DESC
-                        ) inv
-                        OUTER APPLY (
-                            SELECT TOP 1 paym.PaymentMethod 
-                            FROM [dentist].[Payments] paym
-                            WHERE paym.InvoiceID = inv.InvoiceID
-                            ORDER BY paym.PaymentID DESC
-                        ) pay
+                        {waApply}
+                        {invApply}
+                        {payApply}
                         WHERE (@DoctorId IS NULL 
                            OR a.DoctorID = @DoctorId 
                            OR (a.DoctorID IS NULL AND p.DoctorID = @DoctorId))
