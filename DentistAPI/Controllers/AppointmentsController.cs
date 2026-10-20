@@ -424,6 +424,18 @@ namespace DentistAPI.Controllers
 
                         if (patientForWhatsApp != null)
                         {
+                            patientForWhatsApp.WhatsAppOptIn = true;
+                            if (patientForWhatsApp.PatientID > 0)
+                            {
+                                try
+                                {
+                                    using var optCmd = new SqlCommand("UPDATE [dentist].[Patients] SET WhatsAppOptIn = 1 WHERE PatientID = @Pid AND (WhatsAppOptIn = 0 OR WhatsAppOptIn IS NULL)", conn);
+                                    optCmd.Parameters.AddWithValue("@Pid", patientForWhatsApp.PatientID);
+                                    await optCmd.ExecuteNonQueryAsync();
+                                }
+                                catch { }
+                            }
+
                             Doctor? doc = null;
                             if (appointment.DoctorID.HasValue && appointment.DoctorID.Value > 0)
                             {

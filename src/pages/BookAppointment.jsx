@@ -5,11 +5,13 @@ import Footer from '../components/Footer';
 import { 
     Calendar, User, Phone, Mail, CheckCircle2, Stethoscope, 
     ChevronRight, CalendarCheck, ExternalLink, ArrowRight, 
-    Search, Check, Users, Sparkles, AlertCircle, Volume2, VolumeX
+    Search, Check, Users, Sparkles, AlertCircle, Volume2, VolumeX, MessageCircle
 } from 'lucide-react';
 import { downloadIcsFile, getGoogleCalendarUrl, APPOINTMENT_REASONS } from './AppointmentsList';
 import { getPatientAvatarUrl } from '../utils/avatarUtils';
 import aiVoice from '../utils/aiVoiceAssistant';
+import { normalizePakistaniPhone, formatPakistaniPhone } from '../validators';
+import apiFetch from '../utils/apiClient';
 
 export default function BookAppointment() {
     const navigate = useNavigate();
@@ -34,6 +36,7 @@ export default function BookAppointment() {
     const [lastBookedAppointment, setLastBookedAppointment] = useState(null);
     const [error, setError] = useState('');
     const [emailStatus, setEmailStatus] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Form Validation & AI Voice Assistant States
     const [errors, setErrors] = useState({});
@@ -59,15 +62,19 @@ export default function BookAppointment() {
                 return '';
             case 'phone':
                 if (!val) return 'Contact phone number is required.';
-                const digits = String(val).replace(/\D/g, '');
-                if (digits.length < 10) return 'Phone number must contain at least 10 digits.';
-                if (/[a-zA-Z]/.test(val)) return 'Phone number should not contain letters.';
+                const phoneCheck = normalizePakistaniPhone(val);
+                if (!phoneCheck.isValid) return phoneCheck.error;
                 return '';
             case 'preferredDate':
                 if (!val) return 'Appointment date and time is required.';
-                const selectedTime = new Date(val).getTime();
+                const selectedDate = new Date(val);
+                const selectedTime = selectedDate.getTime();
                 if (isNaN(selectedTime)) return 'Please choose a valid calendar date and time.';
                 if (selectedTime < Date.now() - 60000) return 'Appointment date and time cannot be in the past.';
+                const hour = selectedDate.getHours();
+                if (hour < 8 || hour >= 20) {
+                    return 'Operating Hours Alert: Appointments can only be booked between 08:00 AM and 08:00 PM.';
+                }
                 return '';
             case 'email':
                 if (val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
@@ -140,7 +147,7 @@ export default function BookAppointment() {
                 setLoadingPatients(true);
                 // 1. If a specific doctor is selected, fetch their patients
                 if (formData.doctorID) {
-                    const res = await fetch(`/api/patients/doctor/${formData.doctorID}`);
+                    const res = await apiFetch(`/api/patients/doctor/${formData.doctorID}`);
                     if (res.ok) {
                         const data = await res.json();
                         if (isMounted) setPatients(Array.isArray(data) ? data : []);
@@ -160,7 +167,7 @@ export default function BookAppointment() {
 
                 const responses = await Promise.all(
                     targetDoctorIds.map(id =>
-                        fetch(`/api/patients/doctor/${id}`)
+                        apiFetch(`/api/patients/doctor/${id}`)
                             .then(r => (r.ok ? r.json() : []))
                             .catch(() => [])
                     )
@@ -225,6 +232,7 @@ export default function BookAppointment() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (isSubmitting) return;
 
         // 1. Full Form Validation Check
         const validationErrors = validateAll();
@@ -252,10 +260,12 @@ export default function BookAppointment() {
             return;
         }
 
+        setIsSubmitting(true);
         try {
+            const phoneNorm = normalizePakistaniPhone(formData.phone);
             const payload = {
                 fullName: (formData.fullName || '').trim(),
-                phone: (formData.phone || '').trim(),
+                phone: phoneNorm.isValid ? phoneNorm.normalized : (formData.phone || '').trim(),
                 email: (formData.email || '').trim() || null,
                 preferredDate: formData.preferredDate,
                 doctorID: formData.doctorID ? parseInt(formData.doctorID, 10) : null,
@@ -263,10 +273,13 @@ export default function BookAppointment() {
                 status: 'Confirmed'
             };
 
-            const response = await fetch('/api/appointments', {
+            const response = await apiFetch('/api/appointments', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    ...payload,
+                    whatsAppOptIn: true
+                })
             });
             if (response.ok) {
                 const data = await response.json().catch(() => ({}));
@@ -274,7 +287,7 @@ export default function BookAppointment() {
 
                 // Double guarantee: ensure Reason is directly saved to SQL database even on older deployed backend DLLs
                 if (newId && payload.reason) {
-                    await fetch(`/api/appointments/${newId}`, {
+                    await apiFetch(`/api/appointments/${newId}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -294,7 +307,10 @@ export default function BookAppointment() {
                 } catch (vErr) {}
             } else {
                 const errorData = await response.json().catch(() => ({}));
-                const msg = errorData.message || 'Failed to book appointment. Please try again.';
+                if (errorData?.error?.fields) {
+                    setErrors(prev => ({ ...prev, ...errorData.error.fields }));
+                }
+                const msg = errorData?.error?.message || errorData.message || 'Failed to book appointment. Please try again.';
                 setError(msg);
                 try {
                     aiVoice.speakDoctorError(null, msg);
@@ -306,6 +322,8 @@ export default function BookAppointment() {
             try {
                 aiVoice.speakDoctorError(null, 'Server connection error occurred.');
             } catch (vErr) {}
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -336,67 +354,120 @@ export default function BookAppointment() {
                     {/* Right side - Booking Form & Confirmation */}
                     <div className="lg:w-1/2 p-8 sm:p-12 lg:p-16 bg-white relative">
                         
-                        {submitted && lastBookedAppointment ? (
-                            <div className="space-y-6 py-4 animate-scale-up">
-                                <div className="p-6 bg-emerald-50 border border-emerald-200 rounded-3xl text-center space-y-3">
-                                    <div className="w-14 h-14 bg-emerald-500 text-white rounded-full flex items-center justify-center mx-auto shadow-md">
-                                        <CheckCircle2 className="w-8 h-8" />
-                                    </div>
-                                    <h3 className="text-2xl font-bold text-slate-900">Appointment Confirmed!</h3>
-                                    <p className="text-xs text-slate-600 max-w-xs mx-auto">
-                                        Your consultation for <strong>{lastBookedAppointment.fullName}</strong> is scheduled for:
-                                    </p>
-                                    <div className="text-sm font-bold text-[#4A7CD2] bg-white py-2 px-4 rounded-xl border border-emerald-200 inline-block">
-                                        📅 {new Date(lastBookedAppointment.preferredDate).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
-                                    </div>
-                                    {emailStatus?.sent === true && (
-                                        <p className="text-xs text-emerald-700 font-semibold">✓ Confirmation email has been sent.</p>
-                                    )}
-                                </div>
+                        {submitted && lastBookedAppointment ? (() => {
+                            const cleanPhone = (lastBookedAppointment.phone || '').replace(/[^0-9]/g, '');
+                            const appointmentDateStr = new Date(lastBookedAppointment.preferredDate).toLocaleString('en-US', { 
+                                weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true 
+                            });
+                            const attendingDoctor = doctors.find(d => String(d.doctorID) === String(lastBookedAppointment.doctorID));
+                            const doctorName = attendingDoctor ? `Dr. ${attendingDoctor.fullName || attendingDoctor.lastName}` : 'Dentia Specialist';
+                            const waMessage = `🦷 *Dentia Dental Care - Appointment Confirmation*\n\n` +
+                                `Hello *${lastBookedAppointment.fullName}*,\n` +
+                                `Your appointment has been confirmed:\n\n` +
+                                `📅 *Date & Time:* ${appointmentDateStr}\n` +
+                                `👨‍⚕️ *Attending Doctor:* ${doctorName}\n` +
+                                `📋 *Reason:* ${lastBookedAppointment.reason || 'General Consultation'}\n\n` +
+                                `🏥 *Clinic:* Dentia Dental Clinic\n` +
+                                `📍 *Address:* Suite 400, Grand Central Medical Plaza\n\n` +
+                                `Thank you for choosing Dentia!`;
+                            const waUrl = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(waMessage)}` : `https://wa.me/?text=${encodeURIComponent(waMessage)}`;
+                            const isDoctorLoggedIn = Boolean(JSON.parse(localStorage.getItem('doctor') || '{}')?.token);
 
-                                {/* Calendar Sync Buttons */}
-                                <div className="space-y-3">
-                                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block text-center">Save to Your Calendar</span>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                        <button
-                                            onClick={() => downloadIcsFile(lastBookedAppointment)}
-                                            className="py-3 px-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-700 transition flex items-center justify-center gap-2 shadow-xs cursor-pointer"
-                                        >
-                                            <CalendarCheck className="w-4 h-4 text-emerald-600" />
-                                            <span>Add to Phone (.ics)</span>
-                                        </button>
+                            return (
+                                <div className="space-y-6 py-4 animate-scale-up">
+                                    <div className="p-6 bg-emerald-50 border border-emerald-200 rounded-3xl text-center space-y-3">
+                                        <div className="w-14 h-14 bg-emerald-500 text-white rounded-full flex items-center justify-center mx-auto shadow-md">
+                                            <CheckCircle2 className="w-8 h-8" />
+                                        </div>
+                                        <h3 className="text-2xl font-bold text-slate-900">Appointment Confirmed!</h3>
+                                        <p className="text-xs text-slate-600 max-w-xs mx-auto">
+                                            Your consultation for <strong>{lastBookedAppointment.fullName}</strong> is scheduled for:
+                                        </p>
+                                        <div className="text-sm font-bold text-[#4A7CD2] bg-white py-2 px-4 rounded-xl border border-emerald-200 inline-block">
+                                            📅 {appointmentDateStr}
+                                        </div>
+                                        {emailStatus?.sent === true && (
+                                            <p className="text-xs text-emerald-700 font-semibold">✓ Confirmation email has been sent.</p>
+                                        )}
+                                    </div>
+
+                                    {/* 💬 WhatsApp Instant Notification Button */}
+                                    <div className="p-4 bg-emerald-50/70 border border-emerald-200/80 rounded-2xl space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                                                <MessageCircle className="w-4 h-4 text-emerald-600" /> WhatsApp Notification
+                                            </span>
+                                            <span className="text-[11px] font-semibold text-emerald-700 bg-white px-2 py-0.5 rounded-full border border-emerald-200">Instant Delivery</span>
+                                        </div>
+                                        <p className="text-xs text-emerald-800">
+                                            Click below to receive or send your full appointment summary directly on WhatsApp:
+                                        </p>
                                         <a
-                                            href={getGoogleCalendarUrl(lastBookedAppointment)}
+                                            href={waUrl}
                                             target="_blank"
-                                            rel="noreferrer"
-                                            className="py-3 px-4 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
+                                            rel="noopener noreferrer"
+                                            className="w-full py-3 px-4 bg-[#25D366] hover:bg-[#20bd5a] text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                                         >
-                                            <ExternalLink className="w-4 h-4" />
-                                            <span>Google Calendar</span>
+                                            <MessageCircle className="w-4 h-4 fill-white text-[#25D366]" />
+                                            <span>Open Appointment on WhatsApp</span>
+                                            <ExternalLink className="w-3.5 h-3.5 opacity-80" />
                                         </a>
                                     </div>
-                                </div>
 
-                                <div className="flex gap-3 pt-4 border-t border-slate-100">
-                                    <button
-                                        onClick={() => {
-                                            setSubmitted(false);
-                                            setFormData({ fullName: '', phone: '', email: '', preferredDate: '', doctorID: formData.doctorID, reason: 'General Consultation' });
-                                        }}
-                                        className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-bold transition cursor-pointer"
-                                    >
-                                        Book Another
-                                    </button>
-                                    <Link
-                                        to="/appointments"
-                                        className="flex-1 py-3 bg-[#4A7CD2] hover:bg-[#3b66b2] text-white rounded-2xl text-xs font-bold transition text-center flex items-center justify-center gap-1.5 shadow-md"
-                                    >
-                                        <span>View Schedule</span>
-                                        <ArrowRight className="w-4 h-4" />
-                                    </Link>
+                                    {/* Calendar Sync Buttons */}
+                                    <div className="space-y-3">
+                                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block text-center">Save to Your Calendar</span>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <button
+                                                onClick={() => downloadIcsFile(lastBookedAppointment)}
+                                                className="py-3 px-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-700 transition flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+                                            >
+                                                <CalendarCheck className="w-4 h-4 text-emerald-600" />
+                                                <span>Add to Phone (.ics)</span>
+                                            </button>
+                                            <a
+                                                href={getGoogleCalendarUrl(lastBookedAppointment)}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="py-3 px-4 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
+                                            >
+                                                <ExternalLink className="w-4 h-4" />
+                                                <span>Google Calendar</span>
+                                            </a>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-3 pt-4 border-t border-slate-100">
+                                        <button
+                                            onClick={() => {
+                                                setSubmitted(false);
+                                                setFormData({ fullName: '', phone: '', email: '', preferredDate: '', doctorID: formData.doctorID, reason: 'Consultation' });
+                                            }}
+                                            className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-bold transition cursor-pointer"
+                                        >
+                                            Book Another
+                                        </button>
+                                        {isDoctorLoggedIn ? (
+                                            <Link
+                                                to="/appointments"
+                                                className="flex-1 py-3 bg-[#4A7CD2] hover:bg-[#3b66b2] text-white rounded-2xl text-xs font-bold transition text-center flex items-center justify-center gap-1.5 shadow-md"
+                                            >
+                                                <span>View Schedule</span>
+                                                <ArrowRight className="w-4 h-4" />
+                                            </Link>
+                                        ) : (
+                                            <Link
+                                                to="/"
+                                                className="flex-1 py-3 bg-[#4A7CD2] hover:bg-[#3b66b2] text-white rounded-2xl text-xs font-bold transition text-center flex items-center justify-center gap-1.5 shadow-md"
+                                            >
+                                                <span>Return to Home</span>
+                                                <ArrowRight className="w-4 h-4" />
+                                            </Link>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                        ) : (
+                            );
+                        })() : (
                             <div>
                                 <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
                                     <div className="space-y-1">
@@ -729,9 +800,10 @@ export default function BookAppointment() {
                                     {/* Submit Button */}
                                     <button 
                                         type="submit" 
-                                        className="w-full py-4 mt-4 bg-[#4A7CD2] hover:bg-[#3b66b2] text-white font-bold text-sm rounded-2xl shadow-lg transition-all transform hover:-translate-y-0.5 cursor-pointer flex items-center justify-center space-x-2"
+                                        disabled={isSubmitting}
+                                        className={`w-full py-4 mt-4 bg-[#4A7CD2] hover:bg-[#3b66b2] text-white font-bold text-sm rounded-2xl shadow-lg transition-all transform hover:-translate-y-0.5 cursor-pointer flex items-center justify-center space-x-2 ${isSubmitting ? 'opacity-60 cursor-not-allowed' : ''}`}
                                     >
-                                        <span>Confirm Appointment</span>
+                                        <span>{isSubmitting ? 'Verifying & Confirming...' : 'Confirm Appointment'}</span>
                                         <ChevronRight className="w-4 h-4" />
                                     </button>
                                 </form>

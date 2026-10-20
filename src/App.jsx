@@ -5,8 +5,10 @@ import LandingDashboard from './pages/LandingDashboard';
 import PatientDirectory from './pages/PatientDirectory';
 import ErrorBoundary from './components/ErrorBoundary';
 import IdleSessionManager from './components/IdleSessionManager';
+import GlobalNanoPixHardwareSyncManager from './components/GlobalNanoPixHardwareSyncManager';
 
 // 🌟 Route-level Lazy Loading: Isolates heavy 3D, PDF, and clinical modules
+const Doctor3DAssistantWidget = lazy(() => import('./components/aiDoctor/Doctor3DAssistantWidget'));
 const ChartPage = lazy(() => import('./pages/ChartPage'));
 const ToothDetailPage = lazy(() => import('./pages/ToothDetailPage'));
 const NewPatientPage = lazy(() => import('./pages/NewPatientPage'));
@@ -23,6 +25,10 @@ const AIDentalNotesPage = lazy(() => import('./modules/aiDentalNotes/pages/AIDen
 const AIDentalNoteDetailPage = lazy(() => import('./modules/aiDentalNotes/pages/AIDentalNoteDetailPage'));
 const ClinicalGuidePage = lazy(() => import('./pages/ClinicalGuidePage'));
 const DoctorTreatmentPricing = lazy(() => import('./pages/DoctorTreatmentPricing'));
+const DentiaAIRadiologyStudioPage = lazy(() => import('./modules/aiRadiologyStudio/pages/DentiaAIRadiologyStudioPage'));
+const NanoPixSetupGuide = lazy(() => import('./pages/NanoPixSetupGuide'));
+const WhatsAppAdminPage = lazy(() => import('./pages/WhatsAppAdminPage'));
+const ClinicWebsiteStudio = lazy(() => import('./pages/ClinicWebsiteStudio'));
 
 // 🌟 Patient Portal Lazy Loaded Modules
 const PatientPortalLayout = lazy(() => import('./modules/patientPortal/layouts/PatientPortalLayout'));
@@ -39,6 +45,7 @@ const PatientDoctors = lazy(() => import('./modules/patientPortal/pages/PatientD
 import PatientProtectedRoute from './modules/patientPortal/components/PatientProtectedRoute';
 
 import FullPageSkeletonLoader from './components/FullPageSkeletonLoader';
+import LegacyBrowserBanner from './components/LegacyBrowserBanner';
 
 import { validateClinicianSession } from './services/sessionSecurityService';
 
@@ -64,26 +71,32 @@ const ProtectedRoute = ({ children }) => {
         
         return <Navigate to={`/login?${redirectParam}`} state={{ from: location, ...alertState }} replace />;
     }
-    
-    if (sessionCheck.doctor?.isSuperAdmin) {
+
+    // SuperAdmin does NOT have access to clinical doctor pages:
+    // "all other pages access dont have superadmin"
+    const doctor = JSON.parse(localStorage.getItem('doctor') || '{}');
+    if (doctor && doctor.isSuperAdmin) {
         return <Navigate to="/admin/doctors" replace />;
     }
+    
     return children;
 };
 
 const BlockSuperAdmin = ({ children }) => {
-    const doctor = JSON.parse(localStorage.getItem('doctor'));
-    if (doctor && doctor.isSuperAdmin) {
+    const doctor = JSON.parse(localStorage.getItem('doctor') || '{}');
+    if (doctor && doctor.token && doctor.isSuperAdmin) {
         return <Navigate to="/admin/doctors" replace />;
     }
     return children;
 };
 
 const AdminRoute = ({ children }) => {
-    const doctor = JSON.parse(localStorage.getItem('doctor'));
+    const doctor = JSON.parse(localStorage.getItem('doctor') || '{}');
     
+    // Regular doctor does NOT have access to SuperAdmin pages:
+    // "when doctor login dont load superadmin pages"
     if (!doctor || !doctor.token || !doctor.isSuperAdmin) {
-        return <Navigate to="/" replace />;
+        return <Navigate to="/dashboard" replace />;
     }
     return children;
 };
@@ -104,22 +117,30 @@ const AnalyticsPageTracker = () => {
 
     return null;
 };
-
+ 
 export default function App() {
   return (
     <BrowserRouter>
+      <LegacyBrowserBanner />
       <AnalyticsPageTracker />
       <ErrorBoundary>
         <IdleSessionManager />
+        <GlobalNanoPixHardwareSyncManager />
+        <Suspense fallback={null}>
+          <Doctor3DAssistantWidget />
+        </Suspense>
         <Suspense fallback={<PageFallback />}>
           <Routes>
             <Route path="/" element={<BlockSuperAdmin><LandingDashboard /></BlockSuperAdmin>} />
             <Route path="/dashboard" element={<BlockSuperAdmin><LandingDashboard /></BlockSuperAdmin>} />
             <Route path="/login" element={<BlockSuperAdmin><Auth /></BlockSuperAdmin>} />
+            <Route path="/auth" element={<Navigate to="/login" replace />} />
             
             {/* 🛡️ Protected Clinician Workspace & Clinical Patient Records */}
             <Route path="/directory" element={<ProtectedRoute><PatientDirectory /></ProtectedRoute>} />
             <Route path="/chart/:patientId" element={<ProtectedRoute><ChartPage /></ProtectedRoute>} />
+            <Route path="/chart/:patientId/ai-studio" element={<ProtectedRoute><DentiaAIRadiologyStudioPage /></ProtectedRoute>} />
+            <Route path="/ai-studio" element={<ProtectedRoute><DentiaAIRadiologyStudioPage /></ProtectedRoute>} />
             <Route path="/chart/:patientId/tooth" element={<ProtectedRoute><ToothDetailPage /></ProtectedRoute>} />
             <Route path="/chart/:patientId/tooth/:toothNumber" element={<ProtectedRoute><ToothDetailPage /></ProtectedRoute>} />
             <Route path="/new-patient" element={<ProtectedRoute><NewPatientPage /></ProtectedRoute>} />
@@ -128,12 +149,13 @@ export default function App() {
             <Route path="/ai-notes/detail/:noteId" element={<ProtectedRoute><AIDentalNoteDetailPage /></ProtectedRoute>} />
             <Route path="/treatment" element={<ProtectedRoute><Treatment /></ProtectedRoute>} />
             <Route path="/appointments" element={<ProtectedRoute><AppointmentsList /></ProtectedRoute>} />
+            <Route path="/setup-guide" element={<ProtectedRoute><NanoPixSetupGuide /></ProtectedRoute>} />
             
-            {/* Protected Standalone Pages */}
+            {/* Online Patient Booking (Accessible to public visitors & logged-in doctors) */}
             <Route path="/book" element={
-                <ProtectedRoute>
+                <BlockSuperAdmin>
                     <BookAppointment />
-                </ProtectedRoute>
+                </BlockSuperAdmin>
             } />
             <Route path="/treatment-pricing" element={
                 <ProtectedRoute>
@@ -143,6 +165,18 @@ export default function App() {
             <Route path="/doctor/pricing" element={
                 <ProtectedRoute>
                     <DoctorTreatmentPricing />
+                </ProtectedRoute>
+            } />
+            
+            {/* 🌐 Clinic Doctor Dynamic Website Studio */}
+            <Route path="/clinic/website-studio" element={
+                <ProtectedRoute>
+                    <ClinicWebsiteStudio />
+                </ProtectedRoute>
+            } />
+            <Route path="/admin/website" element={
+                <ProtectedRoute>
+                    <ClinicWebsiteStudio />
                 </ProtectedRoute>
             } />
             
@@ -162,10 +196,20 @@ export default function App() {
                     <OrganizationManagement />
                 </AdminRoute>
             } />
+            <Route path="/admin/whatsapp" element={
+                <ProtectedRoute>
+                    <WhatsAppAdminPage />
+                </ProtectedRoute>
+            } />
+            <Route path="/whatsapp-manager" element={
+                <ProtectedRoute>
+                    <WhatsAppAdminPage />
+                </ProtectedRoute>
+            } />
             
             {/* Public Pages */}
-            <Route path="/clinical-guide" element={<ClinicalGuidePage />} />
-            <Route path="/guidelines" element={<ClinicalGuidePage />} />
+            <Route path="/clinical-guide" element={<BlockSuperAdmin><ClinicalGuidePage /></BlockSuperAdmin>} />
+            <Route path="/guidelines" element={<BlockSuperAdmin><ClinicalGuidePage /></BlockSuperAdmin>} />
             <Route path="/about" element={<BlockSuperAdmin><AboutUs /></BlockSuperAdmin>} />
             <Route path="/terms" element={<BlockSuperAdmin><TermsAndConditions /></BlockSuperAdmin>} />
             <Route path="/privacy" element={<BlockSuperAdmin><PrivacyPolicy /></BlockSuperAdmin>} />
