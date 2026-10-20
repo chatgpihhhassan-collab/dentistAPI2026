@@ -1102,5 +1102,55 @@ namespace DentistAPI.Services
 
             await conn.ExecuteAsync(ddl);
         }
+
+        public async Task<bool> RetryMessageAsync(int messageId)
+        {
+            try
+            {
+                using var conn = CreateConnection();
+                var rows = await conn.ExecuteAsync(@"
+                    UPDATE [dentist].[WhatsAppMessages]
+                    SET [Status] = 'Pending',
+                        [RetryCount] = 0,
+                        [ScheduledFor] = SYSUTCDATETIME(),
+                        [ErrorMessage] = NULL,
+                        [UpdatedAt] = SYSUTCDATETIME()
+                    WHERE [MessageID] = @MessageID",
+                    new { MessageID = messageId });
+
+                _logger.LogInformation("WhatsApp message #{MessageId} reset to Pending state for retry.", messageId);
+                return rows > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to reset WhatsApp message #{MessageId} for retry.", messageId);
+                return false;
+            }
+        }
+
+        public async Task<int> RetryAllFailedMessagesAsync()
+        {
+            try
+            {
+                using var conn = CreateConnection();
+                var count = await conn.ExecuteAsync(@"
+                    UPDATE [dentist].[WhatsAppMessages]
+                    SET [Status] = 'Pending',
+                        [RetryCount] = 0,
+                        [ScheduledFor] = SYSUTCDATETIME(),
+                        [ErrorMessage] = NULL,
+                        [UpdatedAt] = SYSUTCDATETIME()
+                    WHERE [Status] = 'Failed' AND DATEDIFF(day, [CreatedAt], SYSUTCDATETIME()) <= 2");
+
+                _logger.LogInformation("Reset {Count} failed WhatsApp message(s) to Pending state for retry.", count);
+                return count;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to reset all failed WhatsApp messages for retry.");
+                return 0;
+            }
+        }
     }
 }
+

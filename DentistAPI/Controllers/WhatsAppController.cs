@@ -174,5 +174,32 @@ namespace DentistAPI.Controllers
                 directChatUrl
             });
         }
+
+        /// <summary>
+        /// Resets a specific failed WhatsApp message back to Pending so the queue retries sending it.
+        /// </summary>
+        [HttpPost("messages/{messageId:int}/retry")]
+        public async Task<IActionResult> RetryMessage(int messageId)
+        {
+            _logger.LogInformation("[WhatsAppController] Re-queueing WhatsApp message #{MessageId} for immediate retry", messageId);
+            bool success = await _whatsAppService.RetryMessageAsync(messageId);
+            if (success)
+            {
+                return Ok(new { success = true, messageId, message = $"Message #{messageId} re-queued for transmission." });
+            }
+            return BadRequest(new { success = false, messageId, message = $"Could not re-queue message #{messageId}." });
+        }
+
+        /// <summary>
+        /// Resets all failed WhatsApp messages back to Pending.
+        /// </summary>
+        [HttpPost("messages/retry-failed")]
+        public async Task<IActionResult> RetryAllFailed()
+        {
+            _logger.LogInformation("[WhatsAppController] Re-queueing all failed WhatsApp messages for retry");
+            int count = await _whatsAppService.RetryAllFailedMessagesAsync();
+            return Ok(new { success = true, retriedCount = count, message = $"{count} failed message(s) re-queued for transmission." });
+        }
     }
 }
+

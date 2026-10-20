@@ -28,6 +28,7 @@ namespace DentistAPI.Services
                                 path.StartsWith("/api/patient-auth") ||
                                 path.StartsWith("/api/patient-portal") ||
                                 path.StartsWith("/api/billing") ||
+                                path.StartsWith("/api/whatsapp/webhook") ||
                                 (path.StartsWith("/api/radiographs/") && path.EndsWith("/image") && (context.Request.Method == "GET" || context.Request.Method == "HEAD")) ||
                                 (path.StartsWith("/api/organizations") && (context.Request.Method == "GET" || context.Request.Method == "OPTIONS")) ||
                                 (path.StartsWith("/api/treatment-pricing") && (context.Request.Method == "GET" || context.Request.Method == "OPTIONS"));

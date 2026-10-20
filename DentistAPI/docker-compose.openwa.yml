@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # =========================================================================
+  # 📱 Dentia OpenWA Gateway (Self-Hosted WhatsApp Web API)
+  # GitHub: https://github.com/rmyndharis/OpenWA
+  # Port: 2785 (Dashboard & Swagger Docs at http://localhost:2785/api/docs)
+  # =========================================================================
+  openwa-gateway:
+    image: rmyndharis/openwa:latest
+    container_name: dentia-openwa-gateway
+    restart: unless-stopped
+    ports:
+      # Bound strictly to 127.0.0.1 for local/internal access
+      # Put behind Nginx / Caddy / Cloudflare Tunnel for secure HTTPS in production
+      - "127.0.0.1:2785:2785"
+    environment:
+      - PORT=2785
+      - API_KEY=${OPENWA_API_KEY:-dentia_prod_secret_key_998877}
+      - API_MASTER_KEY=${API_MASTER_KEY:-dentia_prod_secret_key_998877}
+      - ALLOW_DEV_API_KEY=${ALLOW_DEV_API_KEY:-true}
+      - WEBHOOK_URL=${OPENWA_WEBHOOK_URL:-http://host.docker.internal:5000/api/whatsapp/webhook}
+      - WEBHOOK_SECRET=${OPENWA_WEBHOOK_SECRET:-9cbd786e68def0a5d56feb9400403cbd7a5f27c675a8d2aec3574697993c3484}
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+      - PUPPETEER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage
+    volumes:
+      # Persistent storage volume for browser tokens and WhatsApp Web sessions
+      - openwa_sessions:/app/sessions
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - dentia_network
+
+volumes:
+  openwa_sessions:
+    name: dentia_openwa_sessions
+
+networks:
+  dentia_network:
+    name: dentia_network
+    driver: bridge

@@ -52,6 +52,8 @@ namespace DentistAPI.Services
                 var searchDirs = new[]
                 {
                     Directory.GetCurrentDirectory(),
+                    AppContext.BaseDirectory,
+                    Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location),
                     Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..")),
                     Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..")),
                     @"f:\DentistApp_Theme2"
@@ -83,12 +85,12 @@ namespace DentistAPI.Services
                         CreateNoWindow = true
                     };
                     System.Diagnostics.Process.Start(psi);
-                    _logger.LogInformation("🚀 Development Mode: Auto-spawned OpenWA Gateway daemon at {Script}", runnerScript);
+                    _logger.LogInformation("🚀 Auto-spawned OpenWA Gateway daemon at {Script}", runnerScript);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning("Could not auto-spawn OpenWA dev runner: {Message}", ex.Message);
+                _logger.LogWarning("Could not auto-spawn OpenWA runner: {Message}", ex.Message);
             }
         }
 
@@ -96,11 +98,8 @@ namespace DentistAPI.Services
         {
             _logger.LogInformation("🦷 Dentia WhatsApp Rate-Limited Background Queue Service started.");
 
-            // In local development, ensure OpenWA is running automatically so developer doesn't need to start it manually
-            if (_env.IsDevelopment())
-            {
-                EnsureDevGatewayRunning();
-            }
+            // Ensure OpenWA Gateway is running or attempt auto-launch if runner script is present
+            EnsureDevGatewayRunning();
 
             // Wait 5 seconds after startup before first processing run
             await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);

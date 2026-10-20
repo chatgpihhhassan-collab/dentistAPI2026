@@ -66,5 +66,15 @@ namespace DentistAPI.Services
         /// Background worker method: Processes a batch of pending/retrying messages respecting rate limits (5/min, 2-6s jitter).
         /// </summary>
         Task<int> ProcessPendingQueueBatchAsync();
+
+        /// <summary>
+        /// Resets a failed or retrying WhatsApp message back to Pending state for queue reprocessing.
+        /// </summary>
+        Task<bool> RetryMessageAsync(int messageId);
+
+        /// <summary>
+        /// Resets all failed WhatsApp messages created within the last 48 hours back to Pending state.
+        /// </summary>
+        Task<int> RetryAllFailedMessagesAsync();
     }
 }
