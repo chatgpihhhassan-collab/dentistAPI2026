@@ -681,13 +681,11 @@ namespace DentistAPI.Repositories
         {
             using var connection = CreateConnection();
             string sql = @"
-                SELECT DISTINCT p.* 
+                SELECT p.* 
                 FROM [dentist].[Patients] p
-                LEFT JOIN [dentist].[Appointments] a ON a.PatientID = p.PatientID AND a.DoctorID = @DoctorID
-                LEFT JOIN [dentist].[Invoices] i ON i.PatientID = p.PatientID AND i.DoctorID = @DoctorID
                 WHERE p.DoctorID = @DoctorID 
-                   OR a.AppointmentID IS NOT NULL 
-                   OR i.InvoiceID IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM [dentist].[Appointments] a WHERE a.PatientID = p.PatientID AND a.DoctorID = @DoctorID)
+                   OR EXISTS (SELECT 1 FROM [dentist].[Invoices] i WHERE i.PatientID = p.PatientID AND i.DoctorID = @DoctorID)
                 ORDER BY p.PatientID DESC";
             return await connection.QueryAsync<Patient>(sql, new { DoctorID = doctorId });
         }

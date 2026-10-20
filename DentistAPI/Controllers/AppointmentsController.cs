@@ -168,7 +168,7 @@ namespace DentistAPI.Controllers
                 {
                     await conn.OpenAsync();
                     string query = @"
-                        SELECT DISTINCT 
+                        SELECT 
                             a.AppointmentID,
                             a.PatientID,
                             a.FullName,
@@ -183,10 +183,10 @@ namespace DentistAPI.Controllers
                             p.WhatsAppOptIn,
                             wa.Status AS WhatsAppStatus,
                             wa.SentAt AS WhatsAppSentAt,
-                            i.InvoiceNumber,
-                            i.TotalAmount,
-                            i.Currency,
-                            i.Status AS InvoiceStatus,
+                            inv.InvoiceNumber,
+                            inv.TotalAmount,
+                            inv.Currency,
+                            inv.Status AS InvoiceStatus,
                             pay.PaymentMethod
                         FROM [dentist].[Appointments] a
                         LEFT JOIN [dentist].[Patients] p ON p.PatientID = a.PatientID
@@ -196,12 +196,18 @@ namespace DentistAPI.Controllers
                             WHERE m.AppointmentID = a.AppointmentID 
                             ORDER BY m.MessageID DESC
                         ) wa
-                        LEFT JOIN [dentist].[Invoices] i ON i.AppointmentID = a.AppointmentID
-                        LEFT JOIN (
-                            SELECT InvoiceID, MAX(PaymentMethod) as PaymentMethod 
-                            FROM [dentist].[Payments] 
-                            GROUP BY InvoiceID
-                        ) pay ON pay.InvoiceID = i.InvoiceID
+                        OUTER APPLY (
+                            SELECT TOP 1 i.InvoiceID, i.InvoiceNumber, i.TotalAmount, i.Currency, i.Status
+                            FROM [dentist].[Invoices] i
+                            WHERE i.AppointmentID = a.AppointmentID
+                            ORDER BY i.InvoiceID DESC
+                        ) inv
+                        OUTER APPLY (
+                            SELECT TOP 1 paym.PaymentMethod 
+                            FROM [dentist].[Payments] paym
+                            WHERE paym.InvoiceID = inv.InvoiceID
+                            ORDER BY paym.PaymentID DESC
+                        ) pay
                         WHERE (@DoctorId IS NULL 
                            OR a.DoctorID = @DoctorId 
                            OR (a.DoctorID IS NULL AND p.DoctorID = @DoctorId))
