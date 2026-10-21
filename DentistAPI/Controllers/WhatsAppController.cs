@@ -32,10 +32,31 @@ namespace DentistAPI.Controllers
         /// </summary>
         [HttpGet("/whatsapp")]
         [HttpGet("/api/whatsapp/hub")]
+        [ApiExplorerSettings(IgnoreApi = true)]
         [Produces("text/html")]
         public IActionResult GetWhatsAppHub()
         {
             return Content(WhatsAppHubPage.Render(), "text/html", System.Text.Encoding.UTF8);
+        }
+
+        /// <summary>
+        /// Informational GET endpoint when visited via a web browser.
+        /// </summary>
+        [HttpGet("test-send")]
+        public IActionResult TestSendInfo()
+        {
+            return Ok(new
+            {
+                status = "Ready",
+                message = "The endpoint /api/whatsapp/test-send requires an HTTP POST request. Please use Swagger (/swagger) or send a POST request with JSON body.",
+                method = "POST",
+                samplePayload = new
+                {
+                    phone = "923345081202",
+                    message = "🦷 Dentia Dental Hospital: Real WhatsApp test notification"
+                },
+                swaggerDocs = "/swagger"
+            });
         }
 
         /// <summary>
