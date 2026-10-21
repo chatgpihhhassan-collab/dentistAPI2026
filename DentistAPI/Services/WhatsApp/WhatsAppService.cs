@@ -319,7 +319,7 @@ namespace DentistAPI.Services
                 string friendlyError = ex.Message;
                 if (ex.Message.Contains("refused") || ex.Message.Contains("2785") || ex.InnerException?.Message.Contains("refused") == true)
                 {
-                    friendlyError = "OpenWA Gateway is currently offline or unreachable on port 2785. The notification has been recorded in clinical history and can be dispatched instantly via 1-click 'Open in WhatsApp' (wa.me).";
+                    friendlyError = "WhatsApp notification service is currently in standby. The notification has been recorded in clinical history and can be dispatched instantly via 1-click 'Open in WhatsApp' (wa.me).";
                 }
                 _logger.LogError(ex, "Failed to send WhatsApp message via OpenWA to {ChatId}: {Error}", norm.ChatId, friendlyError);
                 await UpdateMessageStatusAsync(messageId, "Failed", null, friendlyError, null);
