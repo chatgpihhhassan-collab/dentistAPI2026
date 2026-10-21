@@ -156,11 +156,11 @@ export function inferCdtAndFee(conditionStatus, comments, region = 'NZ', billedF
     };
 }
 
-export default function PatientTreatmentInvoiceTab({ patientId, patient, teethState = [], dentitionMode = 'adult' }) {
+export default function PatientTreatmentInvoiceTab({ patientId, patient, teethState = [], dentitionMode = 'adult', onNavigateToPlan }) {
     const [loading, setLoading] = useState(true);
     const [reportData, setReportData] = useState(null);
     const [activeSubTab, setActiveSubTab] = useState('teeth'); // 'teeth' | 'invoices'
-    const [toothFilter, setToothFilter] = useState('All'); // 'All' | 'Completed' | 'Planned' | 'In Progress'
+    const [toothFilter, setToothFilter] = useState('All'); // 'All' | 'Not invoiced' | 'Invoiced' | 'Planned'
     const [toothSearch, setToothSearch] = useState('');
     const [expandedInvoiceId, setExpandedInvoiceId] = useState(null);
 
@@ -342,8 +342,12 @@ export default function PatientTreatmentInvoiceTab({ patientId, patient, teethSt
         if (!reportData?.chartTreatments) return [];
         let list = reportData.chartTreatments;
 
-        if (toothFilter !== 'All') {
-            list = list.filter(t => t.status === toothFilter);
+        if (toothFilter === 'Not invoiced') {
+            list = list.filter(t => !t.invoiceNumber && (t.status === 'Completed' || t.status === 'in_progress' || t.status === 'In Progress'));
+        } else if (toothFilter === 'Invoiced') {
+            list = list.filter(t => Boolean(t.invoiceNumber) || t.status === 'Invoiced' || t.status === 'invoiced');
+        } else if (toothFilter !== 'All') {
+            list = list.filter(t => (t.status || '').toLowerCase() === toothFilter.toLowerCase());
         }
 
         if (toothSearch.trim()) {
@@ -527,6 +531,8 @@ export default function PatientTreatmentInvoiceTab({ patientId, patient, teethSt
         
         if (singleTreatment) {
             setSelectedTreatmentsForInvoice([singleTreatment]);
+        } else if (selectedTreatmentsForInvoice.length > 0) {
+            // Retain user's explicit checkbox selections
         } else {
             setSelectedTreatmentsForInvoice(unbilledCompleted);
         }
@@ -893,7 +899,15 @@ export default function PatientTreatmentInvoiceTab({ patientId, patient, teethSt
                             {chartTreatments.length} Procedures Charted
                         </div>
                         <div className="text-[10px] text-slate-600 font-medium">
-                            <span className="text-emerald-700 font-bold">{chartTreatments.filter(t => t.status === 'Completed').length} Done</span> • <span className="text-amber-600 font-bold">{chartTreatments.filter(t => t.status === 'Planned').length} Plan</span>
+                            <span className="text-emerald-700 font-bold">{chartTreatments.filter(t => t.status === 'Completed').length} Done</span> •{' '}
+                            <button
+                                type="button"
+                                onClick={() => onNavigateToPlan && onNavigateToPlan()}
+                                className="text-amber-600 font-bold hover:underline cursor-pointer inline-flex items-center gap-0.5"
+                                title="View in Treatment Plan"
+                            >
+                                {chartTreatments.filter(t => t.status === 'Planned' || t.status === 'planned').length} Plan →
+                            </button>
                             {summary.unbilledCompletedTotal > 0 && (
                                 <span className="block text-purple-700 font-bold mt-0.5">
                                     Unbilled Done: {formatCurrency(summary.unbilledCompletedTotal)} ({summary.unbilledCompletedCount})
@@ -1005,14 +1019,14 @@ export default function PatientTreatmentInvoiceTab({ patientId, patient, teethSt
                         </div>
 
                         <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-bold">
-                            {['All', 'Completed', 'Planned', 'In Progress'].map(f => (
+                            {['All', 'Not invoiced', 'Invoiced', 'Planned'].map(f => (
                                 <button
                                     key={f}
                                     type="button"
                                     onClick={() => setToothFilter(f)}
-                                    className={`px-2.5 py-1 rounded-lg transition ${
+                                    className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
                                         toothFilter === f 
-                                            ? 'bg-white text-slate-900 shadow-2xs' 
+                                            ? 'bg-white text-slate-900 shadow-2xs font-extrabold' 
                                             : 'text-slate-500 hover:text-slate-900'
                                     }`}
                                 >
@@ -1044,6 +1058,9 @@ export default function PatientTreatmentInvoiceTab({ patientId, patient, teethSt
                             <table className="w-full text-left border-collapse text-xs">
                                 <thead>
                                     <tr className="bg-slate-50/90 border-b border-slate-200 text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
+                                        <th className="py-3 px-3 w-10 text-center">
+                                            <span className="sr-only">Select</span>
+                                        </th>
                                         <th className="py-3 px-4">Tooth Identifier</th>
                                         <th className="py-3 px-4">Condition & Pathology</th>
                                         <th className="py-3 px-4">CDT Code</th>
@@ -1059,10 +1076,26 @@ export default function PatientTreatmentInvoiceTab({ patientId, patient, teethSt
                                         const anatomicalName = TOOTH_NAMES?.[item.toothNumber] || `Tooth #${item.toothNumber}`;
                                         const isUnbilled = !item.invoiceNumber;
                                         const isDone = item.status === 'Completed';
+                                        const isSelected = selectedTreatmentsForInvoice.some(t => 
+                                            (t.treatmentItemId && item.treatmentItemId && t.treatmentItemId === item.treatmentItemId) || 
+                                            (t.toothNumber === item.toothNumber && t.toothKey === item.toothKey)
+                                        );
 
                                         return (
-                                            <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
+                                            <tr key={idx} className={`transition-colors ${isSelected ? 'bg-purple-50/40' : 'hover:bg-blue-50/30'}`}>
                                                 
+                                                {/* Selection Checkbox */}
+                                                <td className="py-3.5 px-3 text-center">
+                                                    <input
+                                                        type="checkbox"
+                                                        disabled={!isDone || !isUnbilled}
+                                                        checked={isSelected}
+                                                        onChange={() => handleToggleTreatmentSelect(item)}
+                                                        className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-slate-300 disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed"
+                                                        title={!isDone ? 'Treatment must be Completed before invoicing' : (!isUnbilled ? 'Already invoiced' : 'Select for invoice')}
+                                                    />
+                                                </td>
+
                                                 {/* Tooth Identifier */}
                                                 <td className="py-3.5 px-4 font-bold text-slate-900">
                                                     <div className="flex items-center gap-2.5">
@@ -1295,6 +1328,41 @@ export default function PatientTreatmentInvoiceTab({ patientId, patient, teethSt
                                     )}
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {/* Floating Bottom Action Banner when Treatments are Selected */}
+                    {selectedTreatmentsForInvoice.length > 0 && (
+                        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex flex-wrap items-center justify-between gap-4 max-w-xl w-[92vw] animate-in fade-in slide-in-from-bottom-3">
+                            <div className="flex items-center gap-3">
+                                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                                <div className="text-xs">
+                                    <span className="font-extrabold text-white">
+                                        {selectedTreatmentsForInvoice.length} procedure{selectedTreatmentsForInvoice.length > 1 ? 's' : ''} selected
+                                    </span>
+                                    <span className="text-slate-400 mx-1.5">•</span>
+                                    <span className="font-mono font-bold text-emerald-400">
+                                        Total: {formatCurrency(selectedTreatmentsForInvoice.reduce((sum, it) => sum + (it.fee || 0), 0))}
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedTreatmentsForInvoice([])}
+                                    className="text-xs text-slate-400 hover:text-white px-2.5 py-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleOpenCreateInvoice()}
+                                    className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-md cursor-pointer"
+                                >
+                                    <Receipt className="w-3.5 h-3.5" />
+                                    <span>Generate Invoice</span>
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>

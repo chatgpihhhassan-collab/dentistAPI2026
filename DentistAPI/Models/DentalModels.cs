@@ -202,6 +202,18 @@ namespace DentistAPI.Models
         public string? Action { get; set; }
     }
 
+    public class AuditLogRecordRequest
+    {
+        public int? DoctorId { get; set; }
+        public int? DoctorID { get; set; }
+        public int? UserId { get; set; }
+        public string? UserRole { get; set; }
+        public string? Action { get; set; }
+        public string? Entity { get; set; }
+        public string? Message { get; set; }
+        public string? Details { get; set; }
+    }
+
     public class Radiograph
     {
         public int RadiographID { get; set; }

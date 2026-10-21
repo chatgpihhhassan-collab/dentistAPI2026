@@ -142,6 +142,7 @@ namespace DentistAPI.Models
         public string? ProfileImageUrl { get; set; }
         public string? Languages { get; set; } = "English, Urdu";
         public int? OrganizationID { get; set; }
+        public string? OrganizationName { get; set; }
         public string? HospitalDepartment { get; set; }
     }
 

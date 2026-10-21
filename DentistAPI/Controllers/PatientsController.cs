@@ -26,6 +26,7 @@ namespace DentistAPI.Controllers
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IFileUploadSecurityService _fileUploadService;
         private readonly IAuditLogService _auditLogService;
+        private readonly IDataNormalizationService _dataNorm;
         private readonly ILogger<PatientsController> _logger;
         private readonly string _apiKey;
         private readonly string _geminiEndpoint;
@@ -36,6 +37,7 @@ namespace DentistAPI.Controllers
             IHttpClientFactory httpClientFactory,
             IFileUploadSecurityService fileUploadService,
             IAuditLogService auditLogService,
+            IDataNormalizationService dataNorm,
             ILogger<PatientsController> logger)
         {
             _repository = repository;
@@ -43,6 +45,7 @@ namespace DentistAPI.Controllers
             _httpClientFactory = httpClientFactory;
             _fileUploadService = fileUploadService;
             _auditLogService = auditLogService;
+            _dataNorm = dataNorm;
             _logger = logger;
             _apiKey = config["GEMINI_API_KEY"] ?? string.Empty;
             var modelName = !string.IsNullOrEmpty(config["GEMINI_MODEL"]) ? config["GEMINI_MODEL"]! : "gemini-flash-latest";
@@ -150,14 +153,33 @@ namespace DentistAPI.Controllers
                 });
             }
 
-            // REG-004: Do not invent fake email addresses
+            // Phone normalization: enforce strict E.164 (+923XXXXXXXXX)
+            if (!string.IsNullOrWhiteSpace(patient.Phone))
+            {
+                var phoneCheck = _dataNorm.NormalizePakistaniPhone(patient.Phone);
+                if (phoneCheck.IsValid)
+                {
+                    patient.Phone = phoneCheck.Normalized;
+                }
+                else
+                {
+                    return BadRequest("Invalid Pakistani mobile number (+923XXXXXXXXX or 03XXXXXXXXX).");
+                }
+            }
+
+            // REG-004: Validate email format strictly and do not invent fake email addresses
             if (string.IsNullOrWhiteSpace(patient.Email))
             {
                 patient.Email = null;
             }
             else
             {
-                patient.Email = patient.Email.Trim().ToLowerInvariant();
+                var cleanEmail = patient.Email.Trim().ToLowerInvariant();
+                if (!Regex.IsMatch(cleanEmail, @"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"))
+                {
+                    return BadRequest("Invalid email format. Please provide a valid email address.");
+                }
+                patient.Email = cleanEmail;
             }
 
             if (patient.Address == null)
@@ -813,6 +835,36 @@ Rules:
                 }
 
                 int primaryDocId = request.Updates?.FirstOrDefault()?.DoctorId ?? 1;
+                string clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+                // AI-001: Audit record on every chart update
+                try
+                {
+                    _auditLogService.LogAccess(
+                        primaryDocId,
+                        "Doctor",
+                        request.PatientId,
+                        "UPDATE_PATIENT_CHART",
+                        $"Synchronized {request.Updates?.Count ?? 0} teeth observations to chart.",
+                        clientIp
+                    );
+
+                    await _repository.InsertAuditLogAsync(
+                        "PatientChart",
+                        request.PatientId,
+                        "UPDATE_CHART",
+                        null,
+                        new { toothCount = request.Updates?.Count ?? 0 },
+                        primaryDocId,
+                        "Doctor",
+                        clientIp
+                    );
+                }
+                catch (Exception auditEx)
+                {
+                    _logger.LogWarning(auditEx, "Failed to persist chart update audit log for patient {PatientId}", request.PatientId);
+                }
+
                 GeminiCallLogger.LogSync(
                     "TEETH ODONTOGRAM BULK SYNC",
                     request.PatientId,
@@ -925,6 +977,38 @@ Rules:
             return Ok(logs);
         }
 
+        [HttpPost("{id}/audit-logs")]
+        [HttpPost("{id}/audit-log")]
+        public async Task<IActionResult> RecordPatientAuditLog(int id, [FromBody] AuditLogRecordRequest req)
+        {
+            int userId = req?.DoctorId ?? req?.DoctorID ?? req?.UserId ?? 1;
+            string userRole = !string.IsNullOrWhiteSpace(req?.UserRole) ? req.UserRole : "Doctor";
+            string action = !string.IsNullOrWhiteSpace(req?.Action) ? req.Action : "SAVE_CHART";
+            string entity = !string.IsNullOrWhiteSpace(req?.Entity) ? req.Entity : "PatientChart";
+            string details = !string.IsNullOrWhiteSpace(req?.Details) ? req.Details : (!string.IsNullOrWhiteSpace(req?.Message) ? req.Message : $"Chart audit record for patient {id}");
+            string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            try
+            {
+                _auditLogService.LogAccess(userId, userRole, id, action, details, ip);
+                await _repository.InsertAuditLogAsync(entity, id, action, null, details, userId, userRole, ip);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Non-fatal error logging audit event for patient {Id}", id);
+            }
+
+            return Ok(new { success = true, message = "Audit log recorded successfully." });
+        }
+
+        [HttpGet("{id}/audit-logs")]
+        [HttpGet("{id}/audit-log")]
+        public async Task<IActionResult> GetPatientAuditLogs(int id)
+        {
+            var logs = await _repository.GetAuditLogsAsync(id, "PatientChart");
+            return Ok(logs);
+        }
+
         [HttpGet("{id}/diagnostic-assessment")]
         public async Task<IActionResult> GetDiagnosticAssessment(int id)
         {
@@ -992,6 +1076,35 @@ Rules:
                 {
                     return BadRequest(new { message = "Date of Birth cannot be older than 125 years." });
                 }
+            }
+
+            // Phone normalization: enforce strict E.164 (+923XXXXXXXXX)
+            if (!string.IsNullOrWhiteSpace(req.Phone))
+            {
+                var phoneCheck = _dataNorm.NormalizePakistaniPhone(req.Phone);
+                if (phoneCheck.IsValid)
+                {
+                    req.Phone = phoneCheck.Normalized;
+                }
+                else
+                {
+                    return BadRequest(new { message = phoneCheck.ErrorMessage ?? "Invalid Pakistani mobile number (+923XXXXXXXXX or 03XXXXXXXXX)." });
+                }
+            }
+
+            // REG-004: Validate email format strictly
+            if (string.IsNullOrWhiteSpace(req.Email))
+            {
+                req.Email = null;
+            }
+            else
+            {
+                var cleanEmail = req.Email.Trim().ToLowerInvariant();
+                if (!Regex.IsMatch(cleanEmail, @"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"))
+                {
+                    return BadRequest(new { message = "Invalid email format. Please provide a valid email address." });
+                }
+                req.Email = cleanEmail;
             }
             
             try

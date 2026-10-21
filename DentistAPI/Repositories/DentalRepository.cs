@@ -194,6 +194,81 @@ namespace DentistAPI.Repositories
                         );
                         CREATE NONCLUSTERED INDEX [IX_OrthoAligners_PatientID] ON [dentist].[OrthoAlignerTreatments]([PatientID]);
                     END;
+
+                    -- 6. Ensure Visits, Charges, TreatmentItems, AuditLogs Exist
+                    IF OBJECT_ID('dentist.Visits', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE [dentist].[Visits] (
+                            [VisitID]        BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                            [PatientID]      INT NOT NULL,
+                            [DoctorID]       INT NOT NULL,
+                            [AppointmentID]  INT NULL,
+                            [VisitDate]      DATE NOT NULL CONSTRAINT DF_Visits_VisitDate DEFAULT CAST(SYSUTCDATETIME() AS DATE),
+                            [Status]         NVARCHAR(30) NOT NULL CONSTRAINT DF_Visits_Status DEFAULT 'checked_in',
+                            [CreatedAt]      DATETIME2(7) NOT NULL CONSTRAINT DF_Visits_CreatedAt DEFAULT SYSUTCDATETIME()
+                        );
+                        CREATE NONCLUSTERED INDEX IX_Visits_Patient_Date ON [dentist].[Visits] ([PatientID], [VisitDate] DESC);
+                    END;
+
+                    IF OBJECT_ID('dentist.Charges', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE [dentist].[Charges] (
+                            [ChargeID]       BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                            [PatientID]      INT NOT NULL,
+                            [VisitID]        BIGINT NOT NULL,
+                            [ChargeType]     NVARCHAR(30) NOT NULL,
+                            [RadiographID]   INT NULL,
+                            [Description]    NVARCHAR(255) NOT NULL,
+                            [Amount]         DECIMAL(18,2) NOT NULL,
+                            [Currency]       NVARCHAR(10) NOT NULL CONSTRAINT DF_Charges_Currency DEFAULT 'PKR',
+                            [InvoiceID]      BIGINT NULL,
+                            [CreatedAt]      DATETIME2(7) NOT NULL CONSTRAINT DF_Charges_CreatedAt DEFAULT SYSUTCDATETIME()
+                        );
+                        CREATE NONCLUSTERED INDEX IX_Charges_Patient_Unbilled ON [dentist].[Charges] ([PatientID], [InvoiceID]);
+                    END;
+
+                    IF OBJECT_ID('dentist.TreatmentItems', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE [dentist].[TreatmentItems] (
+                            [TreatmentItemID]   BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                            [PatientID]         INT NOT NULL,
+                            [DoctorID]          INT NOT NULL,
+                            [ToothNumber]       INT NOT NULL,
+                            [ToothKey]          NVARCHAR(10) NOT NULL CONSTRAINT DF_TreatmentItems_ToothKey DEFAULT '1',
+                            [ProcedureCode]     NVARCHAR(50) NOT NULL,
+                            [ProcedureName]     NVARCHAR(255) NOT NULL,
+                            [Fee]               DECIMAL(18,2) NOT NULL,
+                            [Currency]          NVARCHAR(10) NOT NULL CONSTRAINT DF_TreatmentItems_Currency DEFAULT 'PKR',
+                            [Status]            NVARCHAR(30) NOT NULL CONSTRAINT DF_TreatmentItems_Status DEFAULT 'planned',
+                            [PlannedVisitID]    BIGINT NULL,
+                            [AppointmentID]     INT NULL,
+                            [StartedAt]         DATETIME2(7) NULL,
+                            [CompletedVisitID]  BIGINT NULL,
+                            [CompletedAt]       DATETIME2(7) NULL,
+                            [InvoiceID]         BIGINT NULL,
+                            [Notes]             NVARCHAR(MAX) NULL,
+                            [CreatedAt]         DATETIME2(7) NOT NULL CONSTRAINT DF_TreatmentItems_CreatedAt DEFAULT SYSUTCDATETIME(),
+                            [UpdatedAt]         DATETIME2(7) NOT NULL CONSTRAINT DF_TreatmentItems_UpdatedAt DEFAULT SYSUTCDATETIME()
+                        );
+                        CREATE NONCLUSTERED INDEX IX_TreatmentItems_Patient_Status ON [dentist].[TreatmentItems] ([PatientID], [Status]);
+                    END;
+
+                    IF OBJECT_ID('dentist.AuditLogs', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE [dentist].[AuditLogs] (
+                            [AuditLogID]    BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                            [Entity]        NVARCHAR(50) NOT NULL,
+                            [EntityID]      BIGINT NOT NULL,
+                            [Action]        NVARCHAR(50) NOT NULL,
+                            [OldValue]      NVARCHAR(MAX) NULL,
+                            [NewValue]      NVARCHAR(MAX) NULL,
+                            [UserID]        INT NOT NULL,
+                            [UserRole]      NVARCHAR(50) NOT NULL CONSTRAINT DF_AuditLogs_UserRole DEFAULT 'Doctor',
+                            [IPAddress]     NVARCHAR(50) NULL,
+                            [CreatedAt]     DATETIME2(7) NOT NULL CONSTRAINT DF_AuditLogs_CreatedAt DEFAULT SYSUTCDATETIME()
+                        );
+                        CREATE NONCLUSTERED INDEX IX_AuditLogs_Entity ON [dentist].[AuditLogs] ([Entity], [EntityID], [CreatedAt] DESC);
+                    END;
                 ");
             }
             catch (System.Exception ex)
@@ -220,7 +295,12 @@ namespace DentistAPI.Repositories
         public async Task<Doctor> GetDoctorByUsernameAsync(string username)
         {
             using var connection = CreateConnection();
-            return await connection.QuerySingleOrDefaultAsync<Doctor>("SELECT * FROM [dentist].[Doctors] WHERE Username = @Username", new { Username = username });
+            await EnsureDoctorColumnsExistAsync(connection);
+            return await connection.QuerySingleOrDefaultAsync<Doctor>(@"
+                SELECT d.*, o.Name AS OrganizationName, o.LogoUrl AS OrganizationLogoUrl, o.City AS OrganizationCity
+                FROM [dentist].[Doctors] d
+                LEFT JOIN [dentist].[Organizations] o ON o.OrganizationID = d.OrganizationID
+                WHERE d.Username = @Username", new { Username = username });
         }
 
         private static bool _doctorColumnsEnsured = false;
@@ -703,8 +783,33 @@ namespace DentistAPI.Repositories
         public async Task<Patient> SearchPatientByNameAsync(string name)
         {
             using var connection = CreateConnection();
-            string query = "SELECT * FROM [dentist].[Patients] WHERE FirstName LIKE @Name OR LastName LIKE @Name";
-            return await connection.QueryFirstOrDefaultAsync<Patient>(query, new { Name = $"%{name}%" });
+            string cleanDigits = Regex.Replace(name ?? string.Empty, @"\D", "");
+            string altDigits = cleanDigits;
+            if (cleanDigits.StartsWith("03") && cleanDigits.Length >= 4)
+            {
+                altDigits = cleanDigits.Substring(1); // 300... matches 92300...
+            }
+            else if (cleanDigits.StartsWith("92") && cleanDigits.Length >= 5)
+            {
+                altDigits = "0" + cleanDigits.Substring(2); // 0300... matches 0300...
+            }
+
+            string query = @"
+                SELECT TOP 1 * FROM [dentist].[Patients] 
+                WHERE FirstName LIKE @Name 
+                   OR LastName LIKE @Name
+                   OR (FirstName + ' ' + LastName) LIKE @Name
+                   OR Phone LIKE @Name
+                   OR (@Digits <> '' AND (
+                        REPLACE(REPLACE(REPLACE(REPLACE(Phone, '+', ''), '-', ''), ' ', ''), '(', '') LIKE @DigitsQuery
+                        OR REPLACE(REPLACE(REPLACE(REPLACE(Phone, '+', ''), '-', ''), ' ', ''), '(', '') LIKE @AltDigitsQuery
+                   ))";
+            return await connection.QueryFirstOrDefaultAsync<Patient>(query, new { 
+                Name = $"%{name}%",
+                Digits = cleanDigits,
+                DigitsQuery = $"%{cleanDigits}%",
+                AltDigitsQuery = $"%{altDigits}%"
+            });
         }
 
         public virtual async Task<Patient> GetPatientByIdAsync(int id)
@@ -3169,6 +3274,764 @@ namespace DentistAPI.Repositories
             using var connection = CreateConnection();
             int rows = await connection.ExecuteAsync("DELETE FROM [dentist].[OrthoAlignerTreatments] WHERE OrthoAlignerID = @Id;", new { Id = id });
             return rows > 0;
+        }
+
+        // =====================================================================================
+        // 🦷 TREATMENT PLAN & UNIFIED BILLING FLOW METHODS (PRODUCTION READY)
+        // =====================================================================================
+
+        public async Task LogAuditAsync(SqlConnection conn, SqlTransaction tx, string entity, long entityId, string action, object? oldValue, object? newValue, int userId, string userRole = "Doctor")
+        {
+            try
+            {
+                string oldJson = oldValue != null ? System.Text.Json.JsonSerializer.Serialize(oldValue) : null;
+                string newJson = newValue != null ? System.Text.Json.JsonSerializer.Serialize(newValue) : null;
+
+                await conn.ExecuteAsync(@"
+                    INSERT INTO [dentist].[AuditLogs] (Entity, EntityID, Action, OldValue, NewValue, UserID, UserRole, CreatedAt)
+                    VALUES (@Entity, @EntityID, @Action, @OldValue, @NewValue, @UserID, @UserRole, SYSUTCDATETIME())",
+                    new { Entity = entity, EntityID = entityId, Action = action, OldValue = oldJson, NewValue = newJson, UserID = userId, UserRole = userRole }, tx);
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AuditLog Error] Failed to write audit log: {ex.Message}");
+            }
+        }
+
+        public async Task InsertAuditLogAsync(string entity, long entityId, string action, object? oldValue, object? newValue, int userId, string userRole = "Doctor", string? ipAddress = null)
+        {
+            try
+            {
+                using var conn = CreateConnection();
+                string? oldJson = oldValue != null ? (oldValue is string os ? os : System.Text.Json.JsonSerializer.Serialize(oldValue)) : null;
+                string? newJson = newValue != null ? (newValue is string ns ? ns : System.Text.Json.JsonSerializer.Serialize(newValue)) : null;
+
+                await conn.ExecuteAsync(@"
+                    INSERT INTO [dentist].[AuditLogs] (Entity, EntityID, Action, OldValue, NewValue, UserID, UserRole, IPAddress, CreatedAt)
+                    VALUES (@Entity, @EntityID, @Action, @OldValue, @NewValue, @UserID, @UserRole, @IPAddress, SYSUTCDATETIME())",
+                    new { Entity = entity, EntityID = entityId, Action = action, OldValue = oldJson, NewValue = newJson, UserID = userId, UserRole = userRole, IPAddress = ipAddress });
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AuditLog Error] Failed to write standalone audit log: {ex.Message}");
+            }
+        }
+
+        public async Task<IEnumerable<dynamic>> GetAuditLogsAsync(long? entityId = null, string? entity = null, int limit = 50)
+        {
+            try
+            {
+                using var conn = CreateConnection();
+                string sql = @"
+                    SELECT TOP (@Limit) AuditLogID, Entity, EntityID, Action, OldValue, NewValue, UserID, UserRole, IPAddress, CreatedAt
+                    FROM [dentist].[AuditLogs]
+                    WHERE (@EntityId IS NULL OR EntityID = @EntityId)
+                      AND (@Entity IS NULL OR Entity = @Entity)
+                    ORDER BY CreatedAt DESC";
+                return await conn.QueryAsync(sql, new { EntityId = entityId, Entity = entity, Limit = limit });
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AuditLog Error] Failed to fetch audit logs: {ex.Message}");
+                return Enumerable.Empty<dynamic>();
+            }
+        }
+
+        public async Task<(Visit visit, Charge charge, bool alreadyCheckedIn)> CheckinPatientAsync(int patientId, int doctorId, int? appointmentId = null)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            using var tx = conn.BeginTransaction();
+
+            // 1. Check for existing active visit today
+            var existingVisit = await conn.QueryFirstOrDefaultAsync<Visit>(@"
+                SELECT * FROM [dentist].[Visits] 
+                WHERE PatientID = @PatientID AND VisitDate = CAST(SYSUTCDATETIME() AS DATE) AND Status = 'checked_in'",
+                new { PatientID = patientId }, tx);
+
+            if (existingVisit != null)
+            {
+                var existingCharge = await conn.QueryFirstOrDefaultAsync<Charge>(@"
+                    SELECT * FROM [dentist].[Charges] 
+                    WHERE VisitID = @VisitID AND ChargeType = 'consultation'",
+                    new { VisitID = existingVisit.VisitID }, tx);
+
+                tx.Commit();
+                return (existingVisit, existingCharge ?? new Charge { VisitID = existingVisit.VisitID, PatientID = patientId, Amount = 0 }, true);
+            }
+
+            // 2. Fetch Doctor's Consultation Fee from DoctorFeeSchedules (or standard fallback)
+            decimal consultationFee = 5000.00m; // Default clinic PKR
+            string currency = "PKR";
+
+            try
+            {
+                var feeRow = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                    SELECT StandardFee, Currency FROM [dentist].[DoctorFeeSchedules]
+                    WHERE DoctorID = @DoctorID AND ProcedureCode IN ('D0120', 'D0150') AND IsActive = 1",
+                    new { DoctorID = doctorId }, tx);
+
+                if (feeRow != null)
+                {
+                    consultationFee = (decimal)feeRow.StandardFee;
+                    currency = (string)feeRow.Currency;
+                }
+            }
+            catch { }
+
+            // 3. Create Visit
+            long visitId = await conn.QuerySingleAsync<long>(@"
+                INSERT INTO [dentist].[Visits] (PatientID, DoctorID, AppointmentID, VisitDate, Status, CreatedAt)
+                OUTPUT INSERTED.VisitID
+                VALUES (@PatientID, @DoctorID, @AppointmentID, CAST(SYSUTCDATETIME() AS DATE), 'checked_in', SYSUTCDATETIME())",
+                new { PatientID = patientId, DoctorID = doctorId, AppointmentID = appointmentId }, tx);
+
+            // 4. Create Consultation Charge
+            long chargeId = await conn.QuerySingleAsync<long>(@"
+                INSERT INTO [dentist].[Charges] (PatientID, VisitID, ChargeType, Description, Amount, Currency, CreatedAt)
+                OUTPUT INSERTED.ChargeID
+                VALUES (@PatientID, @VisitID, 'consultation', 'Initial Clinical Consultation & Oral Examination', @Amount, @Currency, SYSUTCDATETIME())",
+                new { PatientID = patientId, VisitID = visitId, Amount = consultationFee, Currency = currency }, tx);
+
+            await LogAuditAsync(conn, tx, "Visit", visitId, "create", null, new { visitId, consultationFee }, doctorId);
+
+            tx.Commit();
+            return (
+                new Visit { VisitID = visitId, PatientID = patientId, DoctorID = doctorId, Status = "checked_in", VisitDate = DateTime.UtcNow.Date },
+                new Charge { ChargeID = chargeId, PatientID = patientId, VisitID = visitId, ChargeType = "consultation", Amount = consultationFee, Currency = currency },
+                false
+            );
+        }
+
+        public async Task<Charge> CreateXrayChargeAsync(int patientId, int doctorId, int? radiographId = null)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            using var tx = conn.BeginTransaction();
+
+            // Find or create today's visit
+            var visit = await conn.QueryFirstOrDefaultAsync<Visit>(@"
+                SELECT * FROM [dentist].[Visits] 
+                WHERE PatientID = @PatientID AND VisitDate = CAST(SYSUTCDATETIME() AS DATE) AND Status = 'checked_in'",
+                new { PatientID = patientId }, tx);
+
+            long visitId;
+            if (visit != null)
+            {
+                visitId = visit.VisitID;
+            }
+            else
+            {
+                visitId = await conn.QuerySingleAsync<long>(@"
+                    INSERT INTO [dentist].[Visits] (PatientID, DoctorID, VisitDate, Status, CreatedAt)
+                    OUTPUT INSERTED.VisitID
+                    VALUES (@PatientID, @DoctorID, CAST(SYSUTCDATETIME() AS DATE), 'checked_in', SYSUTCDATETIME())",
+                    new { PatientID = patientId, DoctorID = doctorId }, tx);
+            }
+
+            decimal xrayFee = 3000.00m; // Default PKR for Intraoral Single RVG / OPG
+            string currency = "PKR";
+
+            try
+            {
+                var feeRow = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                    SELECT StandardFee, Currency FROM [dentist].[DoctorFeeSchedules]
+                    WHERE DoctorID = @DoctorID AND ProcedureCode IN ('D0220', 'D0330', 'D0210') AND IsActive = 1",
+                    new { DoctorID = doctorId }, tx);
+
+                if (feeRow != null)
+                {
+                    xrayFee = (decimal)feeRow.StandardFee;
+                    currency = (string)feeRow.Currency;
+                }
+            }
+            catch { }
+
+            long chargeId = await conn.QuerySingleAsync<long>(@"
+                INSERT INTO [dentist].[Charges] (PatientID, VisitID, ChargeType, RadiographID, Description, Amount, Currency, CreatedAt)
+                OUTPUT INSERTED.ChargeID
+                VALUES (@PatientID, @VisitID, 'xray', @RadiographID, 'Intraoral Digital Radiograph (Sensor Scan)', @Amount, @Currency, SYSUTCDATETIME())",
+                new { PatientID = patientId, VisitID = visitId, RadiographID = radiographId, Amount = xrayFee, Currency = currency }, tx);
+
+            await LogAuditAsync(conn, tx, "Charge", chargeId, "create", null, new { chargeId, xrayFee, radiographId }, doctorId);
+
+            tx.Commit();
+            return new Charge
+            {
+                ChargeID = chargeId,
+                PatientID = patientId,
+                VisitID = visitId,
+                ChargeType = "xray",
+                RadiographID = radiographId,
+                Description = "Intraoral Digital Radiograph (Sensor Scan)",
+                Amount = xrayFee,
+                Currency = currency
+            };
+        }
+
+        public async Task<(List<TreatmentItem> createdItems, Appointment? autoAppointment)> SaveObservationsAsync(RecordObservationRequest request)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            using var tx = conn.BeginTransaction();
+
+            var created = new List<TreatmentItem>();
+
+            foreach (var obs in request.Observations)
+            {
+                // Edge Case 8.1: Block duplicate if an active item (planned or in_progress) already exists for this tooth & procedure
+                int existingCount = await conn.ExecuteScalarAsync<int>(@"
+                    SELECT COUNT(*) FROM [dentist].[TreatmentItems]
+                    WHERE PatientID = @PatientID AND ToothNumber = @ToothNumber 
+                      AND ProcedureCode = @ProcedureCode AND Status IN ('planned', 'in_progress')",
+                    new { PatientID = request.PatientId, ToothNumber = obs.ToothNumber, ProcedureCode = obs.ProcedureCode }, tx);
+
+                if (existingCount > 0)
+                {
+                    continue; // Skip duplicate to uphold Edge Case 8.1
+                }
+
+                // Snapshot fee from DoctorFeeSchedules at this exact moment
+                decimal fee = obs.FeeOverride ?? 0;
+                string currency = "PKR";
+
+                if (fee <= 0)
+                {
+                    try
+                    {
+                        var feeRow = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                            SELECT StandardFee, Currency FROM [dentist].[DoctorFeeSchedules]
+                            WHERE DoctorID = @DoctorID AND ProcedureCode = @Code AND IsActive = 1",
+                            new { DoctorID = request.DoctorId, Code = obs.ProcedureCode }, tx);
+
+                        if (feeRow != null)
+                        {
+                            fee = (decimal)feeRow.StandardFee;
+                            currency = (string)feeRow.Currency;
+                        }
+                        else
+                        {
+                            fee = 14000.00m; // Default restorative fallback
+                        }
+                    }
+                    catch
+                    {
+                        fee = 14000.00m;
+                    }
+                }
+
+                string procName = !string.IsNullOrEmpty(obs.ProcedureName) ? obs.ProcedureName : "Dental Procedure";
+                string toothKey = !string.IsNullOrEmpty(obs.ToothKey) ? obs.ToothKey : obs.ToothNumber.ToString();
+
+                long itemId = await conn.QuerySingleAsync<long>(@"
+                    INSERT INTO [dentist].[TreatmentItems]
+                    (PatientID, DoctorID, ToothNumber, ToothKey, ProcedureCode, ProcedureName, Fee, Currency, Status, Notes, CreatedAt, UpdatedAt)
+                    OUTPUT INSERTED.TreatmentItemID
+                    VALUES
+                    (@PatientID, @DoctorID, @ToothNumber, @ToothKey, @ProcedureCode, @ProcedureName, @Fee, @Currency, 'planned', @Notes, SYSUTCDATETIME(), SYSUTCDATETIME())",
+                    new {
+                        PatientID = request.PatientId,
+                        DoctorID = request.DoctorId,
+                        ToothNumber = obs.ToothNumber,
+                        ToothKey = toothKey,
+                        ProcedureCode = obs.ProcedureCode,
+                        ProcedureName = procName,
+                        Fee = fee,
+                        Currency = currency,
+                        Notes = obs.Notes
+                    }, tx);
+
+                await LogAuditAsync(conn, tx, "TreatmentItem", itemId, "create", null, new { status = "planned", fee }, request.DoctorId);
+
+                created.Add(new TreatmentItem
+                {
+                    TreatmentItemID = itemId,
+                    PatientID = request.PatientId,
+                    DoctorID = request.DoctorId,
+                    ToothNumber = obs.ToothNumber,
+                    ToothKey = toothKey,
+                    ProcedureCode = obs.ProcedureCode,
+                    ProcedureName = procName,
+                    Fee = fee,
+                    Currency = currency,
+                    Status = "planned",
+                    Notes = obs.Notes
+                });
+            }
+
+            // Rule 5.4: Auto next appointment if there are planned/in_progress items with no appointment
+            Appointment? autoAppt = null;
+
+            if (created.Count > 0)
+            {
+                var existingAppt = await conn.QueryFirstOrDefaultAsync<Appointment>(@"
+                    SELECT TOP 1 * FROM [dentist].[Appointments]
+                    WHERE (PatientID = @PatientID OR (FullName IS NOT NULL AND FullName = (SELECT CONCAT(FirstName, ' ', LastName) FROM [dentist].[Patients] WHERE PatientID = @PatientID)))
+                      AND Status = 'scheduled' AND PreferredDate >= SYSUTCDATETIME()",
+                    new { PatientID = request.PatientId }, tx);
+
+                if (existingAppt == null)
+                {
+                    // Next free slot: Default 3 days later at 10:00 AM
+                    DateTime nextDate = DateTime.UtcNow.AddDays(3).Date.AddHours(10);
+
+                    // Fetch patient details for appointment
+                    var patient = await conn.QueryFirstOrDefaultAsync<Patient>(@"
+                        SELECT * FROM [dentist].[Patients] WHERE PatientID = @PatientID",
+                        new { PatientID = request.PatientId }, tx);
+
+                    string pName = patient != null ? $"{patient.FirstName} {patient.LastName}".Trim() : "Patient Followup";
+                    string pPhone = patient?.Phone ?? "";
+                    string pEmail = patient?.Email ?? "";
+
+                    try
+                    {
+                        int apptId = await conn.QuerySingleAsync<int>(@"
+                            INSERT INTO [dentist].[Appointments]
+                            (PatientID, DoctorID, FullName, Phone, Email, PreferredDate, Type, Status, AutoCreated, Reason, CreatedAt)
+                            OUTPUT INSERTED.AppointmentID
+                            VALUES
+                            (@PatientID, @DoctorID, @FullName, @Phone, @Email, @PreferredDate, 'treatment', 'scheduled', 1, 'Auto-scheduled Treatment Follow-up', SYSUTCDATETIME())",
+                            new {
+                                PatientID = request.PatientId,
+                                DoctorID = request.DoctorId,
+                                FullName = pName,
+                                Phone = pPhone,
+                                Email = pEmail,
+                                PreferredDate = nextDate
+                            }, tx);
+
+                        var createdIds = created.Select(c => c.TreatmentItemID).ToList();
+                        await conn.ExecuteAsync(@"
+                            UPDATE [dentist].[TreatmentItems] SET AppointmentID = @ApptId WHERE TreatmentItemID IN @Ids",
+                            new { ApptId = apptId, Ids = createdIds }, tx);
+
+                        autoAppt = new Appointment
+                        {
+                            AppointmentID = apptId,
+                            PatientID = request.PatientId,
+                            PreferredDate = nextDate,
+                            Status = "scheduled"
+                        };
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Console.WriteLine($"[Warning] Could not auto-create appointment: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    // Link to existing scheduled appointment
+                    var createdIds = created.Select(c => c.TreatmentItemID).ToList();
+                    await conn.ExecuteAsync(@"
+                        UPDATE [dentist].[TreatmentItems] SET AppointmentID = @ApptId WHERE TreatmentItemID IN @Ids",
+                        new { ApptId = existingAppt.AppointmentID, Ids = createdIds }, tx);
+                }
+            }
+
+            tx.Commit();
+            return (created, autoAppt);
+        }
+
+        public async Task<List<TreatmentItem>> GetTreatmentItemsAsync(int patientId, string[]? statuses = null)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            string sql = @"
+                SELECT ti.*, 
+                       a.PreferredDate AS ScheduledDate,
+                       inv.InvoiceNumber,
+                       ISNULL((SELECT SUM(p.Amount) FROM [dentist].[Payments] p WHERE p.TreatmentItemID = ti.TreatmentItemID AND p.Kind = 'advance'), 0) AS AdvancePaidAmount
+                FROM [dentist].[TreatmentItems] ti
+                LEFT JOIN [dentist].[Appointments] a ON ti.AppointmentID = a.AppointmentID
+                LEFT JOIN [dentist].[Invoices] inv ON ti.InvoiceID = inv.InvoiceID
+                WHERE ti.PatientID = @PatientID";
+
+            if (statuses != null && statuses.Length > 0)
+            {
+                sql += " AND ti.Status IN @Statuses";
+            }
+
+            sql += " ORDER BY ti.CreatedAt DESC, ti.ToothNumber ASC";
+
+            var items = await conn.QueryAsync<TreatmentItem>(sql, new { PatientID = patientId, Statuses = statuses });
+            return items.ToList();
+        }
+
+        public async Task<List<Charge>> GetUnbilledChargesAsync(int patientId)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            string sql = @"
+                SELECT * FROM [dentist].[Charges]
+                WHERE PatientID = @PatientID AND InvoiceID IS NULL
+                ORDER BY CreatedAt DESC";
+            var charges = await conn.QueryAsync<Charge>(sql, new { PatientID = patientId });
+            return charges.ToList();
+        }
+
+        public async Task<bool> StartTreatmentItemAsync(long treatmentItemId, int userId)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            using var tx = conn.BeginTransaction();
+
+            // Concurrency row locking
+            var item = await conn.QueryFirstOrDefaultAsync<TreatmentItem>(@"
+                SELECT * FROM [dentist].[TreatmentItems] WITH (UPDLOCK, ROWLOCK)
+                WHERE TreatmentItemID = @Id", new { Id = treatmentItemId }, tx);
+
+            if (item == null) throw new InvalidOperationException("Treatment item not found.");
+
+            // Status transition rule: only planned -> in_progress
+            if (item.Status != "planned")
+            {
+                throw new InvalidOperationException($"Cannot start item in status '{item.Status}'. Only 'planned' items can be started.");
+            }
+
+            await conn.ExecuteAsync(@"
+                UPDATE [dentist].[TreatmentItems] 
+                SET Status = 'in_progress', StartedAt = SYSUTCDATETIME(), UpdatedAt = SYSUTCDATETIME()
+                WHERE TreatmentItemID = @Id", new { Id = treatmentItemId }, tx);
+
+            await LogAuditAsync(conn, tx, "TreatmentItem", treatmentItemId, "status_change", new { status = "planned" }, new { status = "in_progress" }, userId);
+
+            tx.Commit();
+            return true;
+        }
+
+        public async Task<bool> CompleteTreatmentItemAsync(long treatmentItemId, int userId)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            using var tx = conn.BeginTransaction();
+
+            // Concurrency row locking
+            var item = await conn.QueryFirstOrDefaultAsync<TreatmentItem>(@"
+                SELECT * FROM [dentist].[TreatmentItems] WITH (UPDLOCK, ROWLOCK)
+                WHERE TreatmentItemID = @Id", new { Id = treatmentItemId }, tx);
+
+            if (item == null) throw new InvalidOperationException("Treatment item not found.");
+
+            // Status transition rule: only in_progress -> completed
+            if (item.Status != "in_progress")
+            {
+                throw new InvalidOperationException($"Cannot complete item in status '{item.Status}'. Item must be 'in_progress' to be completed.");
+            }
+
+            // Find or anchor today's visit
+            var visit = await conn.QueryFirstOrDefaultAsync<Visit>(@"
+                SELECT * FROM [dentist].[Visits] 
+                WHERE PatientID = @PatientID AND VisitDate = CAST(SYSUTCDATETIME() AS DATE)",
+                new { PatientID = item.PatientID }, tx);
+
+            long? completedVisitId = visit?.VisitID;
+
+            await conn.ExecuteAsync(@"
+                UPDATE [dentist].[TreatmentItems] 
+                SET Status = 'completed', CompletedAt = SYSUTCDATETIME(), CompletedVisitID = @VisitId, UpdatedAt = SYSUTCDATETIME()
+                WHERE TreatmentItemID = @Id", new { Id = treatmentItemId, VisitId = completedVisitId }, tx);
+
+            await LogAuditAsync(conn, tx, "TreatmentItem", treatmentItemId, "status_change", new { status = "in_progress" }, new { status = "completed" }, userId);
+
+            // Check if all in_progress items for this patient's visit are done
+            int remainingInProgress = await conn.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(*) FROM [dentist].[TreatmentItems]
+                WHERE PatientID = @PatientID AND Status = 'in_progress'",
+                new { PatientID = item.PatientID }, tx);
+
+            if (remainingInProgress == 0 && item.AppointmentID.HasValue)
+            {
+                await conn.ExecuteAsync(@"
+                    UPDATE [dentist].[Appointments] SET Status = 'done' WHERE AppointmentID = @ApptId",
+                    new { ApptId = item.AppointmentID.Value }, tx);
+
+                // If remaining planned items exist without an appointment, auto-create next
+                int remainingPlanned = await conn.ExecuteScalarAsync<int>(@"
+                    SELECT COUNT(*) FROM [dentist].[TreatmentItems]
+                    WHERE PatientID = @PatientID AND Status = 'planned' AND (AppointmentID IS NULL OR AppointmentID = @ApptId)",
+                    new { PatientID = item.PatientID, ApptId = item.AppointmentID.Value }, tx);
+
+                if (remainingPlanned > 0)
+                {
+                    DateTime nextSlot = DateTime.UtcNow.AddDays(3).Date.AddHours(10);
+                    try
+                    {
+                        int newApptId = await conn.QuerySingleAsync<int>(@"
+                            INSERT INTO [dentist].[Appointments]
+                            (PatientID, DoctorID, PreferredDate, Type, Status, AutoCreated, Reason, CreatedAt)
+                            OUTPUT INSERTED.AppointmentID
+                            VALUES
+                            (@PatientID, @DoctorID, @PreferredDate, 'treatment', 'scheduled', 1, 'Auto-created Next Treatment Session', SYSUTCDATETIME())",
+                            new { PatientID = item.PatientID, DoctorID = item.DoctorID, PreferredDate = nextSlot }, tx);
+
+                        await conn.ExecuteAsync(@"
+                            UPDATE [dentist].[TreatmentItems] SET AppointmentID = @NewApptId
+                            WHERE PatientID = @PatientID AND Status = 'planned' AND (AppointmentID IS NULL OR AppointmentID = @OldApptId)",
+                            new { NewApptId = newApptId, PatientID = item.PatientID, OldApptId = item.AppointmentID.Value }, tx);
+                    }
+                    catch { }
+                }
+            }
+
+            tx.Commit();
+            return true;
+        }
+
+        public async Task<bool> CancelTreatmentItemAsync(long treatmentItemId, int userId, string? reason)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            using var tx = conn.BeginTransaction();
+
+            var item = await conn.QueryFirstOrDefaultAsync<TreatmentItem>(@"
+                SELECT * FROM [dentist].[TreatmentItems] WITH (UPDLOCK, ROWLOCK)
+                WHERE TreatmentItemID = @Id", new { Id = treatmentItemId }, tx);
+
+            if (item == null) throw new InvalidOperationException("Treatment item not found.");
+
+            if (item.Status != "planned" && item.Status != "in_progress")
+            {
+                throw new InvalidOperationException($"Cannot cancel item in status '{item.Status}'. Only 'planned' or 'in_progress' items can be cancelled.");
+            }
+
+            string oldStatus = item.Status;
+            string cancelNotes = !string.IsNullOrEmpty(reason) ? $" | Cancelled: {reason}" : " | Cancelled by Doctor";
+
+            await conn.ExecuteAsync(@"
+                UPDATE [dentist].[TreatmentItems] 
+                SET Status = 'cancelled', Notes = CONCAT(ISNULL(Notes, ''), @CancelNotes), UpdatedAt = SYSUTCDATETIME()
+                WHERE TreatmentItemID = @Id", new { Id = treatmentItemId, CancelNotes = cancelNotes }, tx);
+
+            await LogAuditAsync(conn, tx, "TreatmentItem", treatmentItemId, "status_change", new { status = oldStatus }, new { status = "cancelled", reason }, userId);
+
+            tx.Commit();
+            return true;
+        }
+
+        public async Task<string> RecordAdvancePaymentAsync(long treatmentItemId, AdvancePaymentRequest request)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            using var tx = conn.BeginTransaction();
+
+            var item = await conn.QueryFirstOrDefaultAsync<TreatmentItem>(@"
+                SELECT * FROM [dentist].[TreatmentItems] WITH (UPDLOCK, ROWLOCK)
+                WHERE TreatmentItemID = @Id", new { Id = treatmentItemId }, tx);
+
+            if (item == null) throw new InvalidOperationException("Treatment item not found.");
+
+            if (item.Status != "in_progress")
+            {
+                throw new InvalidOperationException("Advance payments can only be collected for items currently 'in_progress'.");
+            }
+
+            // Calculate total existing advance payments for this item
+            decimal currentAdvances = await conn.ExecuteScalarAsync<decimal>(@"
+                SELECT ISNULL(SUM(Amount), 0) FROM [dentist].[Payments]
+                WHERE TreatmentItemID = @Id AND Kind = 'advance'", new { Id = treatmentItemId }, tx);
+
+            if (currentAdvances + request.Amount > item.Fee)
+            {
+                throw new InvalidOperationException($"Total advance payment cannot exceed the procedure fee ({item.Currency} {item.Fee:N2}). Remaining allowable advance: {item.Currency} {(item.Fee - currentAdvances):N2}");
+            }
+
+            string receiptNo = $"ADV-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString().Substring(0, 6).ToUpper()}";
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO [dentist].[Payments]
+                (PaymentReceiptNo, PatientID, Amount, PaymentMethod, PaymentStatus, Kind, TreatmentItemID, ReceivedByDoctorID, PaymentDate, Notes)
+                VALUES
+                (@ReceiptNo, @PatientID, @Amount, @Method, 'Completed', 'advance', @ItemID, @ReceivedBy, SYSUTCDATETIME(), @Notes)",
+                new {
+                    ReceiptNo = receiptNo,
+                    PatientID = item.PatientID,
+                    Amount = request.Amount,
+                    Method = request.PaymentMethod,
+                    ItemID = treatmentItemId,
+                    ReceivedBy = request.ReceivedByUserId,
+                    Notes = request.Notes
+                }, tx);
+
+            await LogAuditAsync(conn, tx, "Payment", treatmentItemId, "create", null, new { receiptNo, amount = request.Amount, kind = "advance" }, request.ReceivedByUserId);
+
+            tx.Commit();
+            return receiptNo;
+        }
+
+        public async Task<(string invoiceNo, decimal total, decimal advancesApplied, decimal balance)> GenerateUnifiedInvoiceAsync(GenerateUnifiedInvoiceRequest request)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            using var tx = conn.BeginTransaction();
+
+            if (!request.TreatmentItemIds.Any() && !request.ChargeIds.Any())
+            {
+                throw new InvalidOperationException("At least one completed treatment item or unbilled charge must be selected.");
+            }
+
+            // 1. Lock and fetch Completed Items
+            var items = new List<TreatmentItem>();
+            if (request.TreatmentItemIds.Any())
+            {
+                items = (await conn.QueryAsync<TreatmentItem>(@"
+                    SELECT * FROM [dentist].[TreatmentItems] WITH (UPDLOCK, ROWLOCK)
+                    WHERE TreatmentItemID IN @Ids AND Status = 'completed' AND InvoiceID IS NULL",
+                    new { Ids = request.TreatmentItemIds }, tx)).ToList();
+
+                if (items.Count != request.TreatmentItemIds.Count)
+                {
+                    throw new InvalidOperationException("One or more selected treatment items are either already invoiced or not in 'completed' state.");
+                }
+            }
+
+            // 2. Lock and fetch Unbilled Charges
+            var charges = new List<Charge>();
+            if (request.ChargeIds.Any())
+            {
+                charges = (await conn.QueryAsync<Charge>(@"
+                    SELECT * FROM [dentist].[Charges] WITH (UPDLOCK, ROWLOCK)
+                    WHERE ChargeID IN @Ids AND InvoiceID IS NULL",
+                    new { Ids = request.ChargeIds }, tx)).ToList();
+
+                if (charges.Count != request.ChargeIds.Count)
+                {
+                    throw new InvalidOperationException("One or more selected charges have already been billed.");
+                }
+            }
+
+            decimal itemsTotal = items.Sum(i => i.Fee);
+            decimal chargesTotal = charges.Sum(c => c.Amount);
+            decimal grandTotal = itemsTotal + chargesTotal;
+
+            // 3. Compute Advance Payments made on these items
+            decimal advancesApplied = 0;
+            if (request.TreatmentItemIds.Any())
+            {
+                advancesApplied = await conn.ExecuteScalarAsync<decimal>(@"
+                    SELECT ISNULL(SUM(Amount), 0) FROM [dentist].[Payments]
+                    WHERE TreatmentItemID IN @ItemIds AND Kind = 'advance' AND InvoiceID IS NULL",
+                    new { ItemIds = request.TreatmentItemIds }, tx);
+            }
+
+            decimal balance = Math.Max(0, grandTotal - advancesApplied);
+            string invoiceNo = $"INV-{DateTime.UtcNow:yyyy}-{Guid.NewGuid().ToString().Substring(0, 6).ToUpper()}";
+            string invStatus = (balance <= 0) ? "Paid" : (advancesApplied > 0 ? "Partially Paid" : "Unpaid");
+
+            // 4. Create Master Invoice
+            long invoiceId = await conn.QuerySingleAsync<long>(@"
+                INSERT INTO [dentist].[Invoices]
+                (InvoiceNumber, PatientID, DoctorID, IssueDate, DueDate, SubTotal, TotalAmount, PaidAmount, Status, Currency, Notes, CreatedAt, UpdatedAt)
+                OUTPUT INSERTED.InvoiceID
+                VALUES
+                (@InvoiceNo, @PatientID, @DoctorID, CAST(SYSUTCDATETIME() AS DATE), DATEADD(DAY, 14, CAST(SYSUTCDATETIME() AS DATE)),
+                 @Total, @Total, @Advances, @Status, 'PKR', @Notes, SYSUTCDATETIME(), SYSUTCDATETIME())",
+                new {
+                    InvoiceNo = invoiceNo,
+                    PatientID = request.PatientId,
+                    DoctorID = request.DoctorId,
+                    Total = grandTotal,
+                    Advances = advancesApplied,
+                    Status = invStatus,
+                    Notes = request.Notes
+                }, tx);
+
+            // 5. Update Treatment Items: status = 'invoiced', InvoiceID = invoiceId
+            if (request.TreatmentItemIds.Any())
+            {
+                await conn.ExecuteAsync(@"
+                    UPDATE [dentist].[TreatmentItems]
+                    SET Status = 'invoiced', InvoiceID = @InvoiceId, UpdatedAt = SYSUTCDATETIME()
+                    WHERE TreatmentItemID IN @Ids",
+                    new { InvoiceId = invoiceId, Ids = request.TreatmentItemIds }, tx);
+
+                // Re-link advance payments to this invoice
+                await conn.ExecuteAsync(@"
+                    UPDATE [dentist].[Payments]
+                    SET InvoiceID = @InvoiceId
+                    WHERE TreatmentItemID IN @Ids AND Kind = 'advance' AND InvoiceID IS NULL",
+                    new { InvoiceId = invoiceId, Ids = request.TreatmentItemIds }, tx);
+            }
+
+            // 6. Update Charges: InvoiceID = invoiceId
+            if (request.ChargeIds.Any())
+            {
+                await conn.ExecuteAsync(@"
+                    UPDATE [dentist].[Charges]
+                    SET InvoiceID = @InvoiceId
+                    WHERE ChargeID IN @Ids",
+                    new { InvoiceId = invoiceId, Ids = request.ChargeIds }, tx);
+            }
+
+            await LogAuditAsync(conn, tx, "Invoice", invoiceId, "create", null, new { invoiceNo, grandTotal, advancesApplied, balance }, request.DoctorId);
+
+            tx.Commit();
+            return (invoiceNo, grandTotal, advancesApplied, balance);
+        }
+
+        public async Task<BillingSummaryDto> GetPatientBillingSummaryAsync(int patientId)
+        {
+            using var conn = new SqlConnection(_connectionString);
+
+            // Financial Cards (calculated dynamically, not hardcoded)
+            decimal totalInvoiced = await conn.ExecuteScalarAsync<decimal>(@"
+                SELECT ISNULL(SUM(TotalAmount), 0) FROM [dentist].[Invoices]
+                WHERE PatientID = @PatientID AND Status <> 'Cancelled'",
+                new { PatientID = patientId });
+
+            decimal totalSettled = await conn.ExecuteScalarAsync<decimal>(@"
+                SELECT ISNULL(SUM(Amount), 0) FROM [dentist].[Payments]
+                WHERE PatientID = @PatientID",
+                new { PatientID = patientId });
+
+            decimal outstandingBalance = await conn.ExecuteScalarAsync<decimal>(@"
+                SELECT ISNULL(SUM(BalanceAmount), 0) FROM [dentist].[Invoices]
+                WHERE PatientID = @PatientID AND Status NOT IN ('Paid', 'Cancelled')",
+                new { PatientID = patientId });
+
+            // Treatment Item Counters
+            var itemCounts = await conn.QueryAsync<dynamic>(@"
+                SELECT Status, COUNT(*) AS Cnt, ISNULL(SUM(Fee), 0) AS TotalVal
+                FROM [dentist].[TreatmentItems]
+                WHERE PatientID = @PatientID
+                GROUP BY Status", new { PatientID = patientId });
+
+            int plannedCount = 0;
+            int inProgressCount = 0;
+            int completedCount = 0;
+            int invoicedCount = 0;
+            decimal plannedVal = 0;
+
+            foreach (var r in itemCounts)
+            {
+                string s = ((string)r.Status).ToLower();
+                int cnt = (int)r.Cnt;
+                decimal val = (decimal)r.TotalVal;
+
+                if (s == "planned") { plannedCount = cnt; plannedVal += val; }
+                else if (s == "in_progress") { inProgressCount = cnt; plannedVal += val; }
+                else if (s == "completed") { completedCount = cnt; }
+                else if (s == "invoiced") { invoicedCount = cnt; }
+            }
+
+            decimal advances = await conn.ExecuteScalarAsync<decimal>(@"
+                SELECT ISNULL(SUM(p.Amount), 0)
+                FROM [dentist].[Payments] p
+                JOIN [dentist].[TreatmentItems] ti ON p.TreatmentItemID = ti.TreatmentItemID
+                WHERE p.PatientID = @PatientID AND p.Kind = 'advance' AND ti.Status IN ('planned', 'in_progress')",
+                new { PatientID = patientId });
+
+            return new BillingSummaryDto
+            {
+                TotalInvoiced = totalInvoiced,
+                TotalSettled = totalSettled,
+                OutstandingBalance = outstandingBalance,
+                PlannedCount = plannedCount,
+                InProgressCount = inProgressCount,
+                CompletedCount = completedCount,
+                InvoicedCount = invoicedCount,
+                TotalPlannedCareValue = plannedVal,
+                TotalAdvanceReceived = advances,
+                Currency = "PKR"
+            };
         }
     }
 }

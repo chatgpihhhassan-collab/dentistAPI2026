@@ -16,7 +16,51 @@ class AIVoiceAssistant {
         }
         this.speaking = false;
         this.currentText = '';
+        this.lastSpokeEndTime = 0;
+        this.recentUtterances = [];
         this.listeners = new Set();
+    }
+
+    /**
+     * Test if an incoming microphone transcript is acoustic feedback/echo from the device speakers
+     */
+    isRecentEcho(candidate) {
+        if (!candidate) return false;
+        const now = Date.now();
+        this.recentUtterances = this.recentUtterances.filter(u => u.expiresAt > now);
+        
+        const cleanCandidate = candidate.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+        if (!cleanCandidate) return false;
+
+        const isSpeakingOrJustFinished = this.speaking || (now - this.lastSpokeEndTime < 2000);
+
+        // 1. Direct prompt echoes while speaking or right after
+        if (cleanCandidate === 'yes doctor' || cleanCandidate === 'yes' || cleanCandidate === 'ready') {
+            return isSpeakingOrJustFinished;
+        }
+
+        const candidateWords = cleanCandidate.split(' ').filter(w => w.length >= 2);
+        if (candidateWords.length === 0) return false;
+
+        for (const item of this.recentUtterances) {
+            const cleanSpoken = item.text.replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+            
+            // Exact full phrase substring match
+            if (cleanSpoken.length >= 8 && (cleanSpoken.includes(cleanCandidate) || cleanCandidate.includes(cleanSpoken))) {
+                return true;
+            }
+
+            // Word overlap check: only flag as echo if high percentage of words match (> 65% and at least 3 matching words)
+            const spokenWords = new Set(cleanSpoken.split(' '));
+            const matchedCount = candidateWords.filter(w => spokenWords.has(w)).length;
+            const ratio = matchedCount / candidateWords.length;
+
+            if (ratio >= 0.65 && matchedCount >= 3) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     isSupported() {
@@ -84,13 +128,61 @@ class AIVoiceAssistant {
         } catch (e) {}
         this.speaking = false;
         this.currentText = '';
+        this.lastSpokeEndTime = Date.now();
         this.notifyListeners();
     }
 
     /**
-     * Speak text using Web Speech Synthesis API
+     * Play subtle clinical chime via Web Audio API (Zero external assets needed)
      */
-    speak(text, { rate = 1.0, pitch = 1.05 } = {}) {
+    playChime(type = 'wake') {
+        if (typeof window === 'undefined') return;
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+            const ctx = new AudioCtx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc.type = 'sine';
+            gain.connect(ctx.destination);
+            osc.connect(gain);
+
+            const now = ctx.currentTime;
+            if (type === 'wake') {
+                // Rising two-tone pleasant chime (523Hz C5 -> 659Hz E5)
+                osc.frequency.setValueAtTime(523.25, now);
+                osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.12);
+                gain.gain.setValueAtTime(0.08, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+                osc.start(now);
+                osc.stop(now + 0.35);
+            } else if (type === 'sleep') {
+                // Descending gentle tone (659Hz E5 -> 440Hz A4)
+                osc.frequency.setValueAtTime(659.25, now);
+                osc.frequency.exponentialRampToValueAtTime(440.0, now + 0.15);
+                gain.gain.setValueAtTime(0.06, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'success') {
+                // Subtle bright triple-tone confirmation
+                osc.frequency.setValueAtTime(587.33, now); // D5
+                osc.frequency.setValueAtTime(880.0, now + 0.08); // A5
+                gain.gain.setValueAtTime(0.07, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+                osc.start(now);
+                osc.stop(now + 0.28);
+            }
+        } catch (e) {
+            // Audio context silently ignored if blocked by autoplay policies
+        }
+    }
+
+    /**
+     * Speak text using Web Speech Synthesis API with dedicated Lady/Female Voice Persona
+     */
+    speak(text, { rate = 1.02, pitch = 1.08 } = {}) {
         if (!this.isSupported() || !this.enabled || !text) return;
 
         try {
@@ -100,18 +192,27 @@ class AIVoiceAssistant {
             utterance.rate = rate;
             utterance.pitch = pitch;
 
-            // Pick a clean, professional natural English voice if available
+            // Pick a clean, professional, natural female/lady voice
             const voices = window.speechSynthesis.getVoices() || [];
-            const preferredVoice = voices.find(v => 
-                v.lang.startsWith('en') && (
-                    v.name.includes('Google') || 
-                    v.name.includes('Natural') || 
-                    v.name.includes('Zira') || 
-                    v.name.includes('Samantha') || 
-                    v.name.includes('Karen') || 
-                    v.name.includes('Jenny')
-                )
-            ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
+            
+            // Priority list of premium female voices across Windows, Mac, Chrome & Edge
+            const femaleKeywords = [
+                'jenny', 'zira', 'samantha', 'karen', 'victoria', 
+                'female', 'woman', 'heera', 'neerja', 'aria', 'google uk english female'
+            ];
+
+            let preferredVoice = voices.find(v => {
+                const nameLower = v.name.toLowerCase();
+                return v.lang.startsWith('en') && femaleKeywords.some(kw => nameLower.includes(kw));
+            });
+
+            // Fallback to any natural or English voice if specific female named voice not found
+            if (!preferredVoice) {
+                preferredVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Natural')));
+            }
+            if (!preferredVoice) {
+                preferredVoice = voices.find(v => v.lang.startsWith('en')) || voices[0];
+            }
 
             if (preferredVoice) {
                 utterance.voice = preferredVoice;
@@ -119,29 +220,54 @@ class AIVoiceAssistant {
 
             this.speaking = true;
             this.currentText = text;
+            const cleanLower = text.toLowerCase();
+            this.recentUtterances.push({
+                text: cleanLower,
+                expiresAt: Date.now() + 8000
+            });
+            if (this.recentUtterances.length > 6) {
+                this.recentUtterances.shift();
+            }
             this.notifyListeners();
 
+            // Watchdog: In case Chrome SpeechSynthesis pauses or misses onend
+            const maxDurationMs = Math.max(3000, Math.min(15000, text.length * 80));
+            if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+            this.watchdogTimer = setTimeout(() => {
+                if (this.speaking) {
+                    console.log('[AIVoiceAssistant] Speech watchdog auto-cleared speaking lock');
+                    this.speaking = false;
+                    this.currentText = '';
+                    this.notifyListeners();
+                }
+            }, maxDurationMs);
+
             utterance.onend = () => {
+                if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
                 this.speaking = false;
                 this.currentText = '';
+                this.lastSpokeEndTime = Date.now();
                 this.notifyListeners();
             };
 
             utterance.onerror = (e) => {
-                // Ignore cancel errors
+                if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
                 if (e.error !== 'canceled' && e.error !== 'interrupted') {
                     console.warn('[AIVoiceAssistant] Utterance error:', e);
                 }
                 this.speaking = false;
                 this.currentText = '';
+                this.lastSpokeEndTime = Date.now();
                 this.notifyListeners();
             };
 
             window.speechSynthesis.speak(utterance);
         } catch (err) {
+            if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
             console.warn('[AIVoiceAssistant] Speech error:', err);
             this.speaking = false;
             this.currentText = '';
+            this.lastSpokeEndTime = Date.now();
             this.notifyListeners();
         }
     }

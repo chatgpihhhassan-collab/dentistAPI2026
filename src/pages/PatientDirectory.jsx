@@ -17,6 +17,8 @@ import FullPageSkeletonLoader from '../components/FullPageSkeletonLoader';
 import WhatsAppOptInToggle from '../components/whatsapp/WhatsAppOptInToggle';
 import apiFetch from '../utils/apiClient';
 import { updatePatientWhatsAppOptIn } from '../services/whatsappService';
+import { formatDatePK, formatDateTimePK, parseDobForInput, formatDobForSave } from '../utils/dateUtils';
+import { normalizePakistaniPhone } from '../validators';
 
 export default function PatientDirectory() {
     const [patients, setPatients] = useState([]);
@@ -126,7 +128,7 @@ export default function PatientDirectory() {
 
     const handleOpenEditPatient = (p) => {
         if (!p) return;
-        const dobStr = p.dob ? new Date(p.dob).toISOString().slice(0, 10) : '';
+        const dobStr = parseDobForInput(p.dob);
         setEditForm({
             firstName: p.firstName || '',
             lastName: p.lastName || '',
@@ -168,7 +170,7 @@ export default function PatientDirectory() {
 
             if (res.upcomingAppointmentQueued) {
                 const dateStr = res.queuedAppointmentDate 
-                    ? new Date(res.queuedAppointmentDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                    ? formatDatePK(res.queuedAppointmentDate)
                     : 'upcoming appointment';
                 showToast(`WhatsApp activated! Upcoming appointment reminder for ${dateStr} has been queued.`, 'success');
             } else {
@@ -193,8 +195,32 @@ export default function PatientDirectory() {
             }
         }
 
+        // Validate and normalize Pakistani phone number
+        let normalizedPhone = (editForm.phone || '').trim();
+        if (normalizedPhone) {
+            const phoneCheck = normalizePakistaniPhone(normalizedPhone);
+            if (!phoneCheck.isValid) {
+                showToast(phoneCheck.error || "Invalid Pakistani mobile number (+923XXXXXXXXX or 03XXXXXXXXX).", "error");
+                return;
+            }
+            normalizedPhone = phoneCheck.normalized;
+        }
+
+        // Validate email format if entered (never save fake placeholders)
+        let sanitizedEmail = (editForm.email || '').trim();
+        if (sanitizedEmail) {
+            const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+            if (!emailRegex.test(sanitizedEmail)) {
+                showToast("Please enter a valid email address.", "error");
+                return;
+            }
+        } else {
+            sanitizedEmail = null;
+        }
+
         const sanitizedFirstName = (editForm.firstName || '').slice(0, 50).trim();
         const sanitizedLastName = (editForm.lastName || '').slice(0, 50).trim();
+        const formattedDob = formatDobForSave(editForm.dob);
 
         setSavingEdit(true);
         console.log('[PatientDirectory] Saving edited patient:', editPatientModal.patient.patientID, editForm);
@@ -207,8 +233,10 @@ export default function PatientDirectory() {
                     ...editForm,
                     firstName: sanitizedFirstName,
                     lastName: sanitizedLastName,
+                    phone: normalizedPhone,
+                    email: sanitizedEmail,
                     whatsAppOptIn: editForm.whatsAppOptIn,
-                    dob: editForm.dob ? new Date(editForm.dob).toISOString() : null
+                    dob: formattedDob
                 })
             });
             if (res.ok) {
@@ -217,8 +245,10 @@ export default function PatientDirectory() {
                     ...editForm,
                     firstName: sanitizedFirstName,
                     lastName: sanitizedLastName,
+                    phone: normalizedPhone,
+                    email: sanitizedEmail,
                     whatsAppOptIn: editForm.whatsAppOptIn,
-                    dob: editForm.dob ? new Date(editForm.dob).toISOString() : null
+                    dob: formattedDob
                 };
 
                 // If WhatsApp was just activated, trigger opt-in service to check retroactive appointment dispatch
@@ -229,7 +259,7 @@ export default function PatientDirectory() {
                             console.log('[PatientDirectory] Retroactive dispatch check completed:', waRes);
                             if (waRes.upcomingAppointmentQueued) {
                                 const dateStr = waRes.queuedAppointmentDate 
-                                    ? new Date(waRes.queuedAppointmentDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                                    ? formatDatePK(waRes.queuedAppointmentDate)
                                     : 'upcoming appointment';
                                 showToast(`WhatsApp activated! Upcoming appointment reminder for ${dateStr} has been queued.`, 'success');
                             }
@@ -446,7 +476,7 @@ export default function PatientDirectory() {
         const pName = `${selectedPatient.firstName || ''} ${selectedPatient.lastName || ''}`.trim() || 'Patient';
         const pId = selectedPatient.patientID || 'N/A';
         const docName = `Dr. ${doctor?.firstName || doctor?.name || 'Ahmed'}`;
-        const exportDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const exportDate = formatDatePK(new Date());
         const exportTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
         try {
@@ -477,7 +507,7 @@ export default function PatientDirectory() {
                 pdf.roundedRect(margin, pageHeight - 24, contentWidth, 16, 1.5, 1.5, 'FD');
 
                 const pRefNo = selectedPatient?.referenceNumber || ('DEN-2026-' + (selectedPatient?.patientID || '00000'));
-                const pDob = selectedPatient?.dob ? new Date(selectedPatient.dob).toLocaleDateString('en-GB') : 'Verified DOB on file';
+                const pDob = selectedPatient?.dob ? formatDatePK(selectedPatient.dob) : 'Verified DOB on file';
 
                 pdf.setFont('helvetica', 'bold');
                 pdf.setFontSize(7.2);
@@ -548,7 +578,7 @@ export default function PatientDirectory() {
                     const dt = log.createdAt || log.CreatedAt;
                     const d = dt ? new Date(dt) : null;
                     const timeString = d 
-                        ? `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} at ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
+                        ? formatDateTimePK(d)
                         : 'Recent';
 
                     // Section Card Background
@@ -910,13 +940,34 @@ export default function PatientDirectory() {
                 return false;
             }
 
-            // 2. Text Search Query Matching
+            // 2. Text Search Query Matching (Supports Name, ID, NHI, City, and Local 03xx / +92 Phone search)
+            const matchesPhone = () => {
+                if (!p.phone || !cSearch) return false;
+                if (p.phone.toLowerCase().includes(cSearch)) return true;
+                const searchDigits = cSearch.replace(/\D/g, '');
+                if (searchDigits.length >= 3) {
+                    const pDigits = (p.phone || '').replace(/\D/g, '');
+                    if (pDigits.includes(searchDigits)) return true;
+                    // If searching local format like 03xx, match 3xx or 923xx in pDigits
+                    if (searchDigits.startsWith('0')) {
+                        const stripped = searchDigits.slice(1);
+                        if (pDigits.includes(stripped) || pDigits.includes('92' + stripped)) return true;
+                    }
+                    // If searching international format 923xx, match 03xx or 3xx in pDigits
+                    if (searchDigits.startsWith('92')) {
+                        const local = '0' + searchDigits.slice(2);
+                        if (pDigits.includes(local) || pDigits.includes(searchDigits.slice(2))) return true;
+                    }
+                }
+                return false;
+            };
+
             const matchesQuery = !cSearch || (
                 (p.firstName && p.firstName.toLowerCase().includes(cSearch)) || 
                 (p.lastName && p.lastName.toLowerCase().includes(cSearch)) || 
                 (`${p.firstName} ${p.lastName}`.toLowerCase().includes(cSearch)) ||
                 (p.patientID && p.patientID.toString().includes(cSearch.replace('#', ''))) ||
-                (p.phone && p.phone.includes(cSearch)) ||
+                matchesPhone() ||
                 (p.nhiNumber && p.nhiNumber.toLowerCase().includes(cSearch)) ||
                 (p.currentTreatmentPlan && p.currentTreatmentPlan.toLowerCase().includes(cSearch)) ||
                 (p.city && p.city.toLowerCase().includes(cSearch))
@@ -2253,7 +2304,7 @@ export default function PatientDirectory() {
                                                 </div>
                                                 <span className="bg-[#4A7CD2] text-white px-2 py-0.5 rounded-md flex items-center gap-1 font-bold text-[9px] flex-shrink-0">
                                                     <Clock className="w-2.5 h-2.5" />
-                                                    {new Date(app.preferredDate).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                    {formatDateTimePK(app.preferredDate)}
                                                 </span>
                                             </div>
                                         );
@@ -2286,7 +2337,7 @@ export default function PatientDirectory() {
                                                 </div>
                                                 <span className="bg-rose-500 text-white px-2 py-0.5 rounded-md flex items-center gap-1 font-bold text-[9px] flex-shrink-0">
                                                     <Clock className="w-2.5 h-2.5" />
-                                                    {new Date(app.preferredDate).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                    {formatDateTimePK(app.preferredDate)}
                                                 </span>
                                             </div>
                                         );
@@ -2457,7 +2508,7 @@ export default function PatientDirectory() {
                                     const dt = log.createdAt || log.CreatedAt;
                                     const d = dt ? new Date(dt) : null;
                                     const timeStr = d 
-                                        ? `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
+                                        ? formatDateTimePK(d)
                                         : 'Recent';
 
                                     const typeColor = 
@@ -2737,7 +2788,7 @@ export default function PatientDirectory() {
                 <div className="flex items-center gap-3">
                     <span>Odontogram & NanoPix: <strong className="text-[#4A7CD2]">Ready</strong></span>
                     <span className="text-slate-300">|</span>
-                    <span className="text-slate-400 font-mono">{new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    <span className="text-slate-400 font-mono">{formatDatePK(new Date())}</span>
                 </div>
             </div>
 

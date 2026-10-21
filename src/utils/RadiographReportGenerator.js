@@ -11,7 +11,8 @@ export const generateRadiographPdf = async ({
   radiograph = {},
   findings = [],
   aiNotes = '',
-  imageDataUrl = null
+  imageDataUrl = null,
+  triSeries = null
 }) => {
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -295,15 +296,56 @@ export const generateRadiographPdf = async ({
   doc.text(docName, signX, y);
   y += 3.5;
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(...textMuted);
-  doc.text('Consultant Dental Surgeon · BDS, FCPS (Oral Surgery)', signX, y);
+  // ---------------------------------------------------------------------------
+  // 7. PATIENT PORTAL ACCESS CREDENTIALS FOOTER BOX
+  // ---------------------------------------------------------------------------
+  const portalBoxY = pageHeight - 32;
+  const pRefNo = patient.referenceNumber || (patient.referenceNo || `DEN-2026-${String(patient.patientID || patient.id || '00000').padStart(5, '0')}`);
+  const pDob = patient.dob ? new Date(patient.dob).toLocaleDateString('en-GB') : 'Verified DOB on file';
 
-  // Footer
+  doc.setFillColor(240, 253, 250); // teal-50
+  doc.setDrawColor(153, 246, 228); // teal-200
+  doc.roundedRect(margin, portalBoxY, contentWidth, 24, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(...primaryTeal);
+  doc.text('PATIENT SELF-SERVICE HEALTH PORTAL ACCESS CREDENTIALS', margin + 4, portalBoxY + 5.5);
+
+  const portalUrl = 'https://dentistfrontend.vercel.app/portal/login';
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...darkSlate);
+  doc.text('• Online Portal URL:', margin + 4, portalBoxY + 11);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...primaryTeal);
+  doc.text(portalUrl, margin + 35, portalBoxY + 11);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...darkSlate);
+  doc.text('• Patient Reference #:', margin + 110, portalBoxY + 11);
+  doc.setTextColor(...primaryTeal);
+  doc.text(pRefNo, margin + 144, portalBoxY + 11);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...darkSlate);
+  doc.text('• Account Password / Access Key:', margin + 4, portalBoxY + 16.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...darkSlate);
+  doc.text(
+    `Initial access password is your verified Date of Birth (${pDob}) or your chosen password. Reset anytime at portal/activate.`,
+    margin + 52,
+    portalBoxY + 16.5
+  );
+
+  doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(...textMuted);
-  doc.text('This radiographic examination was acquired chairside with Eighteeth Nano-Pix sensor and analyzed via Dentia AI Clinical Pipeline.', margin, pageHeight - 8);
+  doc.text(
+    'Patient can view full digital X-rays, 3D odontograms, and invoices online 24/7.',
+    margin + 4,
+    portalBoxY + 21.5
+  );
 
   // Trigger download
   const cleanPatientName = (patient.name || patient.firstName || 'Patient').replace(/[^a-zA-Z0-9]/g, '_');

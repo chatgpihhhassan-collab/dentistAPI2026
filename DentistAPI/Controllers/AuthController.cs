@@ -53,7 +53,11 @@ namespace DentistAPI.Controllers
                 Region = string.IsNullOrEmpty(request.Region) ? "NZ" : request.Region, 
                 Token = token,
                 Specialization = request.Specialization ?? "General Dental Surgeon",
-                ProfileImageUrl = request.ProfileImageUrl
+                ProfileImageUrl = request.ProfileImageUrl,
+                OrganizationID = request.OrganizationID,
+                OrganizationName = !string.IsNullOrEmpty(request.OrganizationName)
+                    ? request.OrganizationName
+                    : (request.Region == "PK" ? "Shifa International Hospitals Ltd" : "Dentia Auckland Regional Dental Hospital")
             });
         }
 
@@ -67,6 +71,10 @@ namespace DentistAPI.Controllers
             }
 
             string token = _tokenService.GenerateToken(doctor.DoctorID, doctor.Username, doctor.IsSuperAdmin);
+            string orgName = !string.IsNullOrEmpty(doctor.OrganizationName)
+                ? doctor.OrganizationName
+                : (doctor.Region == "PK" ? "Shifa International Hospitals Ltd" : "Dentia Auckland Regional Dental Hospital");
+
             return Ok(new AuthResponse { 
                 DoctorID = doctor.DoctorID, 
                 FirstName = doctor.FirstName, 
@@ -75,7 +83,9 @@ namespace DentistAPI.Controllers
                 Token = token, 
                 IsSuperAdmin = doctor.IsSuperAdmin,
                 Specialization = doctor.Specialization,
-                ProfileImageUrl = doctor.ProfileImageUrl
+                ProfileImageUrl = doctor.ProfileImageUrl,
+                OrganizationID = doctor.OrganizationID,
+                OrganizationName = orgName
             });
         }
 

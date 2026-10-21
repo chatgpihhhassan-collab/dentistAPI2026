@@ -21,10 +21,12 @@ import { parseDoctorConversationalIntent, normalizeClinicalSpeech, DENTAL_VOCABU
 import { preloadJawImages, preloadPatientJawTemplates } from '../utils/jawImagePreloader';
 import { fetchWithCache, invalidateCache, setCachedData } from '../utils/apiCache';
 import apiFetch from '../utils/apiClient';
+import { formatDatePK, formatDateTimePK } from '../utils/dateUtils';
 import FullPageSkeletonLoader from '../components/FullPageSkeletonLoader';
 import nanoPixService from '../services/nanoPixDeviceService';
 import NanoPixCaptureModal from '../components/NanoPixCaptureModal';
 import PatientTreatmentInvoiceTab from '../components/PatientTreatmentInvoiceTab';
+import TreatmentPlanTab from '../components/TreatmentPlanTab';
 import ChartRadiographFilmstrip from '../components/ChartRadiographFilmstrip';
 import RadiographImpactInspectorModal from '../components/RadiographImpactInspectorModal';
 import ClinicalReportEditor from '../components/ClinicalReportEditor';
@@ -873,21 +875,46 @@ export default function ChartPage() {
   // Audio/Mic references
   const silenceTimeoutRef = useRef(null);
 
-  // AI Notes Tab States
+  // AI Notes & Modules Tab States
   const [activeTab, setActiveTab] = useState(() => {
     const searchParams = new URLSearchParams(window.location.search);
     const tabParam = searchParams.get('tab');
+    if (tabParam === 'treatment_plan' || tabParam === 'plan' || tabParam === 'treatmentplan') return 'treatment_plan';
     if (tabParam === 'billing' || tabParam === 'invoices' || tabParam === 'treatments' || tabParam === 'treatment') return 'billing';
     if (tabParam === 'notes') return 'notes';
     if (tabParam === 'radiographs' || tabParam === 'imaging') return 'radiographs';
     return 'chart';
-  }); // 'chart' | 'notes' | 'radiographs' | 'billing'
+  }); // 'chart' | 'notes' | 'radiographs' | 'treatment_plan' | 'billing'
+
+  // Dynamic Treatment Plan Badge Count (planned + in_progress)
+  const [planBadgeCount, setPlanBadgeCount] = useState(0);
+
+  const fetchPlanBadgeCount = async () => {
+    if (!patientId) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/patients/${patientId}/treatment-items?status=planned,in_progress`);
+      if (res.ok) {
+        const items = await res.json();
+        setPlanBadgeCount(Array.isArray(items) ? items.length : 0);
+      }
+    } catch (err) {
+      console.warn('Could not load treatment plan count:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (patientId) {
+      fetchPlanBadgeCount();
+    }
+  }, [patientId]);
 
   // Query parameter listener for tab switches
   useEffect(() => {
     const searchParams = new URLSearchParams(location.search);
     const tabParam = searchParams.get('tab');
-    if (tabParam === 'billing' || tabParam === 'invoices' || tabParam === 'treatments' || tabParam === 'treatment') {
+    if (tabParam === 'treatment_plan' || tabParam === 'plan' || tabParam === 'treatmentplan') {
+      setActiveTab('treatment_plan');
+    } else if (tabParam === 'billing' || tabParam === 'invoices' || tabParam === 'treatments' || tabParam === 'treatment') {
       setActiveTab('billing');
     } else if (tabParam === 'notes') {
       setActiveTab('notes');
@@ -4409,8 +4436,59 @@ export default function ChartPage() {
             action: `Saved Dental Chart with ${teethState.length} teeth observations`
           })}).catch(() => {});
 
-        setToast({ visible: true, message: "Patient Chart and Odontogram saved successfully!" });
-        setTimeout(() => setToast({ visible: false, message: '' }), 3000);
+        // AI-001: Explicitly post chart update audit log
+        await apiFetch(`/api/patients/${pid}/audit-logs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            doctorId: docId,
+            action: 'SAVE_PATIENT_CHART',
+            entity: 'PatientChart',
+            message: `Odontogram chart saved with ${teethState.length} teeth observations.`
+          })}).catch(() => {});
+
+        // Post observations to Treatment Plan & Auto Next Appointment (Rule 5.3 & 5.4)
+        const plannedObservations = updates.filter(u => {
+          const s = (u.conditionStatus || u.status || '').toLowerCase();
+          return s && s !== 'healthy' && s !== 'sound';
+        }).map(u => ({
+          toothNumber: typeof u.toothNumber === 'number' ? u.toothNumber : parseInt(u.toothNumber) || 1,
+          toothKey: String(u.toothKey || u.toothNumber),
+          procedureCode: u.cdtCode || 'D2391',
+          procedureName: u.conditionStatus || 'Dental Care',
+          notes: u.comment
+        }));
+
+        let toastMsg = "Patient Chart and Odontogram saved successfully!";
+        if (plannedObservations.length > 0) {
+          try {
+            const obsRes = await fetch(`${API_BASE_URL}/api/patients/${pid}/observations`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                patientId: pid,
+                doctorId: docId,
+                observations: plannedObservations
+              })
+            });
+
+            if (obsRes.ok) {
+              const obsData = await obsRes.json();
+              let apptInfo = "";
+              if (obsData.autoAppointment?.preferredDate) {
+                const apptDate = new Date(obsData.autoAppointment.preferredDate);
+                apptInfo = ` Next appointment: ${apptDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}.`;
+              }
+              toastMsg = `${obsData.count || plannedObservations.length} treatments added to plan.${apptInfo}`;
+              fetchPlanBadgeCount();
+            }
+          } catch (obsErr) {
+            console.warn("Non-fatal observation sync error:", obsErr);
+          }
+        }
+
+        setToast({ visible: true, message: toastMsg });
+        setTimeout(() => setToast({ visible: false, message: '' }), 4500);
       } else {
         const errData = await res.json().catch(() => ({}));
         alert(`Error saving patient chart details: ${errData.message || res.statusText || 'Server error'}`);
@@ -7627,6 +7705,22 @@ export default function ChartPage() {
                   <Image className="w-3.5 h-3.5" /> Imaging & X-Rays
                 </button>
                 <button
+                  onClick={() => setActiveTab('treatment_plan')}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-medium transition-all duration-200 ${
+                    activeTab === 'treatment_plan'
+                      ? 'bg-[#EAF0FC]/80 text-[#4A7CD2] shadow-md border border-[#4A7CD2]/40 font-bold'
+                      : 'text-muted-text hover:text-dark-slate'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Treatment Plan</span>
+                  {planBadgeCount > 0 && (
+                    <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[9px] font-black bg-amber-500 text-white shadow-2xs">
+                      {planBadgeCount}
+                    </span>
+                  )}
+                </button>
+                <button
                   onClick={() => setActiveTab('billing')}
                   className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-medium transition-all duration-200 ${
                     activeTab === 'billing'
@@ -7695,11 +7789,19 @@ export default function ChartPage() {
                       })()}
                     </div>
                     <p className="text-[10px] text-muted-text font-bold truncate flex items-center gap-2 mt-0.5">
-                      <span>DOB: <strong className="text-dark-slate font-extrabold">{patient.dob ? patient.dob.split('T')[0] : '2024-01-01'}</strong> ({patient.gender || 'Male'})</span>
-                      <span>•</span>
-                      <span>📞 {patient.phone || '021 123 4567'}</span>
-                      <span>•</span>
-                      <span className="text-[#4A7CD2]">✉️ {patient.email || 'patient@dentia.com'}</span>
+                      <span>DOB: <strong className="text-dark-slate font-extrabold">{patient.dob ? formatDatePK(patient.dob) : 'N/A'}</strong> ({patient.gender || 'Male'})</span>
+                      {patient.phone ? (
+                        <>
+                          <span>•</span>
+                          <span>📞 {patient.phone}</span>
+                        </>
+                      ) : null}
+                      {patient.email ? (
+                        <>
+                          <span>•</span>
+                          <span className="text-[#4A7CD2]">✉️ {patient.email}</span>
+                        </>
+                      ) : null}
                     </p>
                   </div>
                 </div>
@@ -8963,6 +9065,21 @@ export default function ChartPage() {
               </div>
             )}
 
+            {/* ===== TREATMENT PLAN TAB (NEW) ===== */}
+            {activeTab === 'treatment_plan' && (
+              <div className="flex flex-col gap-6 flex-grow animate-fade-in w-full">
+                <TreatmentPlanTab
+                  patientId={patientId}
+                  patient={patient}
+                  doctorId={doctor?.doctorID || doctor?.DoctorID || 1}
+                  onTreatmentStatusChange={() => {
+                    fetchPlanBadgeCount();
+                  }}
+                  onNavigateToInvoices={() => setActiveTab('billing')}
+                />
+              </div>
+            )}
+
             {/* ===== TREATMENT & INVOICES TAB ===== */}
             {activeTab === 'billing' && (
               <div className="flex flex-col gap-6 flex-grow animate-fade-in w-full">
@@ -8971,6 +9088,7 @@ export default function ChartPage() {
                   patient={patient}
                   teethState={teethState}
                   dentitionMode={dentitionMode}
+                  onNavigateToPlan={() => setActiveTab('treatment_plan')}
                 />
               </div>
             )}

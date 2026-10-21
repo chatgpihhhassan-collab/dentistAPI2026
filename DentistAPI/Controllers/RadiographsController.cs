@@ -79,6 +79,16 @@ namespace DentistAPI.Controllers
                 int radiographId = await _repository.AddRadiographAsync(radiograph);
                 radiograph.RadiographID = radiographId;
 
+                // Rule 5.2: Automatic X-ray fee charge creation in ledger
+                try
+                {
+                    await _repository.CreateXrayChargeAsync(patientId, doctorId ?? 1, radiographId);
+                }
+                catch (Exception chargeEx)
+                {
+                    _logger.LogWarning(chargeEx, "Non-fatal: Automatic X-ray charge generation failed for Patient {PatientId}", patientId);
+                }
+
                 // Return without raw bytes to avoid sending heavy payloads back to client
                 return Ok(new
                 {

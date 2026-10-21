@@ -13,6 +13,7 @@ import jsPDF from 'jspdf';
 import aiVoice from '../utils/aiVoiceAssistant';
 import apiFetch from '../utils/apiClient';
 import { resendAppointmentWhatsApp } from '../services/whatsappService';
+import { formatDatePK, formatDateTimePK } from '../utils/dateUtils';
 
 // Helper: Download .ics calendar event file for Apple / Google / Outlook / Notion Calendar
 export const downloadIcsFile = (appointment, clinicName = "DENTIA Dental Care") => {
@@ -962,13 +963,10 @@ export default function AppointmentsList() {
         return filteredAppointments.filter(a => getLocalDateKey(a.preferredDate) === selectedKey);
     }, [filteredAppointments, selectedDate]);
 
-    // Formatters
+    // Formatters (Enforcing Pakistan Standard Format DD/MM/YYYY)
     const formatDate = (dateString) => {
         if (!dateString || dateString.startsWith('0001')) return 'Not specified';
-        return new Date(dateString).toLocaleDateString('en-US', {
-            weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-            hour: 'numeric', minute: '2-digit', hour12: true
-        });
+        return formatDateTimePK(dateString);
     };
 
     const getStatusBadge = (status) => {
