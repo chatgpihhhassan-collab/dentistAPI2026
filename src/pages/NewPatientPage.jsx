@@ -5,12 +5,16 @@ import {
     Loader2, CheckCircle2, Zap, Check, AlertCircle, Search,
     User, Calendar, Phone, MapPin, Globe, Mail, FileText, Send, RefreshCw, Bot, UserCheck,
     Camera, UploadCloud, Trash2, Image as ImageIcon, HeartPulse, Stethoscope, Activity, BadgeCheck,
-    Volume2, VolumeX, ChevronDown, Sliders
+    Volume2, VolumeX, ChevronDown, Sliders, RotateCcw
 } from 'lucide-react';
 import Navigation from '../components/Navigation';
 import Footer from '../components/Footer';
 import { getPatientAvatarUrl, validateImageFile, fileToDataUrl } from '../utils/avatarUtils';
 import aiVoice from '../utils/aiVoiceAssistant';
+import { normalizePakistaniPhone, formatPakistaniPhone, formatCnic, validateCnic } from '../validators';
+import AIBadgeAndActions from '../components/AIBadgeAndActions';
+import WhatsAppOptInToggle from '../components/whatsapp/WhatsAppOptInToggle';
+import apiFetch from '../utils/apiClient';
 
 export default function NewPatientPage() {
     const [doctor, setDoctor] = useState(null);
@@ -26,14 +30,15 @@ export default function NewPatientPage() {
         gender: '', 
         region: 'PK',
         nhiNumber: '',
-        dentitionType: 'Permanent', // 'Permanent' | 'Pediatric' | 'Mixed'
+        dentitionType: 'Adult', // 'Adult' | 'Pediatric' | 'Mixed'
         guardianName: '',
         guardianRelationship: '',
         currentTreatmentPlan: 'General Consultation',
         selectedAllergies: [],
         medicalNotes: '',
         profileImageDataUrl: null,
-        profileImageMimeType: null
+        profileImageMimeType: null,
+        whatsAppOptIn: false
     });
 
     const calculateAge = (dobString) => {
@@ -48,13 +53,13 @@ export default function NewPatientPage() {
     };
 
     const handleDobChange = (dobVal) => {
-        let detectedDentition = 'Permanent';
+        let detectedDentition = 'Adult';
         if (dobVal) {
             const age = calculateAge(dobVal);
             if (age !== null) {
                 if (age < 6) detectedDentition = 'Pediatric';
                 else if (age <= 12) detectedDentition = 'Mixed';
-                else detectedDentition = 'Permanent';
+                else detectedDentition = 'Adult';
             }
         }
         setNewPatient(prev => ({
@@ -71,9 +76,11 @@ export default function NewPatientPage() {
     const [isRecording, setIsRecording] = useState(false);
     const [speechSupported, setSpeechSupported] = useState(true);
     const [recentlySyncedField, setRecentlySyncedField] = useState({});
+    const [lastAiFillSnapshot, setLastAiFillSnapshot] = useState(null);
     const [askedClinicalDetails, setAskedClinicalDetails] = useState(false);
     const [toast, setToast] = useState({ visible: false, message: '', type: 'success' });
-    const [isExtendedOpen, setIsExtendedOpen] = useState(false);
+    const [isExtendedOpen, setIsExtendedOpen] = useState(true);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Auto-open extended drawer if AI or preset fills any optional field
     useEffect(() => {
@@ -271,10 +278,19 @@ export default function NewPatientPage() {
                 if (!val || val === '') return 'Please select patient gender.';
                 return '';
             case 'phone':
-                if (!val) return ''; // Optional
-                const digits = String(val).replace(/\D/g, '');
-                if (digits.length < 7) return 'Phone number must contain at least 7 digits.';
-                if (/[a-zA-Z]/.test(val)) return 'Phone number should not contain letters.';
+                if (!val || !val.trim()) {
+                    if (newPatient.whatsAppOptIn) {
+                        return 'WhatsApp is active! Mobile phone number is required to send notifications.';
+                    }
+                    return ''; // Optional if WhatsApp is inactive
+                }
+                const phoneCheck = normalizePakistaniPhone(val);
+                if (!phoneCheck.isValid) return phoneCheck.error;
+                return '';
+            case 'nhiNumber':
+                if (!val) return '';
+                const cnicCheck = validateCnic(val);
+                if (!cnicCheck.isValid) return cnicCheck.error;
                 return '';
             case 'email':
                 if (val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
@@ -287,17 +303,30 @@ export default function NewPatientPage() {
     };
 
     const validateAll = () => {
+        console.log('[NewPatientPage] Running full form validation. State:', {
+            firstName: newPatient.firstName,
+            lastName: newPatient.lastName,
+            dob: newPatient.dob,
+            gender: newPatient.gender,
+            phone: newPatient.phone,
+            whatsAppOptIn: newPatient.whatsAppOptIn
+        });
         const newErrors = {};
-        // Section 1: Only Essential Intake fields are mandatory
+        // Section 1: Essential Intake fields
         const fieldsToValidate = ['firstName', 'lastName', 'dob', 'gender'];
-        if (newPatient.phone && newPatient.phone.trim()) fieldsToValidate.push('phone');
+        // Phone is strictly mandatory when WhatsApp is enabled, or if clinician typed any digits
+        if (newPatient.whatsAppOptIn || (newPatient.phone && newPatient.phone.trim())) {
+            fieldsToValidate.push('phone');
+        }
         if (newPatient.email && newPatient.email.trim()) fieldsToValidate.push('email');
+        if (newPatient.nhiNumber && newPatient.nhiNumber.trim()) fieldsToValidate.push('nhiNumber');
 
         fieldsToValidate.forEach(field => {
             const err = validateField(field, newPatient[field]);
             if (err) newErrors[field] = err;
         });
 
+        console.log('[NewPatientPage] Validation complete. Errors found:', Object.keys(newErrors));
         return newErrors;
     };
 
@@ -573,7 +602,7 @@ export default function NewPatientPage() {
 
         try {
             const docId = doctor?.doctorID || doctor?.doctorId || doctor?.id || 1;
-            const res = await fetch('/api/patients/ai-intake', {
+            const res = await apiFetch('/api/patients/ai-intake', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -586,6 +615,9 @@ export default function NewPatientPage() {
 
             if (!res.ok) throw new Error("AI Intake parsing failed.");
             const data = await res.json();
+
+            // Preserve snapshot for clinician undo guardrail (Principle #4)
+            setLastAiFillSnapshot({ ...newPatient });
 
             // Populate form fields with extracted details (Strict stopword protection)
             const invalidNames = ['my', 'a', 'an', 'the', 'new', 'this', 'patient', 'profile', 'record', 'someone', 'user', 'entry', 'mariz'];
@@ -600,7 +632,16 @@ export default function NewPatientPage() {
                 updated.lastName = data.lastName; 
                 syncedMap.lastName = true; 
             }
-            if (data.dob) { updated.dob = data.dob; syncedMap.dob = true; }
+            if (data.dob) { 
+                updated.dob = data.dob; 
+                syncedMap.dob = true; 
+                const age = calculateAge(data.dob);
+                if (age !== null) {
+                    if (age < 6) updated.dentitionType = 'Pediatric';
+                    else if (age <= 12) updated.dentitionType = 'Mixed';
+                    else updated.dentitionType = 'Adult';
+                }
+            }
             if (data.phone) { updated.phone = data.phone; syncedMap.phone = true; }
             if (data.email) { updated.email = data.email; syncedMap.email = true; }
             if (data.gender) { updated.gender = data.gender; syncedMap.gender = true; }
@@ -617,6 +658,25 @@ export default function NewPatientPage() {
             if (data.medicalNotes) { 
                 updated.medicalNotes = updated.medicalNotes ? `${updated.medicalNotes} | ${data.medicalNotes}` : data.medicalNotes; 
                 syncedMap.medicalNotes = true; 
+            }
+
+            // Detect Doctor's Spoken or Typed WhatsApp Opt-in / Opt-out Intent
+            if (/\b(enable|activate|turn on|with|yes|active)\s*(whats\s*app|wa)\b|\bwhats\s*app\s*(active|enabled|on|yes)\b/i.test(cleanText)) {
+                console.log('[AI Intake] Spoken/typed command detected: ENABLE WhatsApp');
+                updated.whatsAppOptIn = true;
+                syncedMap.whatsAppOptIn = true;
+                setIsExtendedOpen(true);
+            } else if (/\b(disable|deactivate|turn off|without|no|off)\s*(whats\s*app|wa)\b|\bwhats\s*app\s*(inactive|disabled|off|no)\b/i.test(cleanText)) {
+                console.log('[AI Intake] Spoken/typed command detected: DISABLE WhatsApp');
+                updated.whatsAppOptIn = false;
+                syncedMap.whatsAppOptIn = true;
+            }
+
+            if (data.whatsAppOptIn !== undefined && data.whatsAppOptIn !== null) {
+                console.log('[AI Intake] Backend parsed whatsAppOptIn:', data.whatsAppOptIn);
+                updated.whatsAppOptIn = Boolean(data.whatsAppOptIn);
+                syncedMap.whatsAppOptIn = true;
+                if (updated.whatsAppOptIn) setIsExtendedOpen(true);
             }
 
             setNewPatient(updated);
@@ -649,6 +709,9 @@ export default function NewPatientPage() {
             } else if (!updated.gender) {
                 aiReplyText = `Understood! What is the patient's **gender** (Male / Female / Other)?`;
                 nextSuggestions = ["Male", "Female", "Other"];
+            } else if (updated.whatsAppOptIn && (!updated.phone || !updated.phone.trim())) {
+                aiReplyText = `I've enabled WhatsApp messaging for **${updated.firstName || 'the patient'}**! 📱 Please provide the patient's **mobile phone number** (e.g. 0300 1234567) so we can dispatch their appointment reminders.`;
+                nextSuggestions = [updated.region === 'PK' ? "0300 1234567" : "021 555 1234"];
             } else if (!updated.phone && !updated.city) {
                 aiReplyText = `Great! What is the patient's **phone number** and **city / address**?`;
                 nextSuggestions = ["0321 4455667, F-8 Islamabad", "0300 1234567, Lahore", "021 555 1234, Auckland NZ"];
@@ -694,17 +757,26 @@ export default function NewPatientPage() {
 
     const handleCreatePatient = async (e) => {
         if (e) e.preventDefault();
+        if (isSubmitting) return;
 
         // 1. Run Complete Form Validation
         const validationErrors = validateAll();
         if (Object.keys(validationErrors).length > 0) {
+            console.warn('[NewPatientPage] Submission blocked by validation errors:', validationErrors);
             setErrors(validationErrors);
             const allTouched = { firstName: true, lastName: true, dob: true, gender: true };
-            if (newPatient.phone) allTouched.phone = true;
+            if (newPatient.whatsAppOptIn || newPatient.phone) allTouched.phone = true;
             if (newPatient.email) allTouched.email = true;
+            if (newPatient.nhiNumber) allTouched.nhiNumber = true;
             setTouched(allTouched);
 
-            const fieldKeys = ['firstName', 'lastName', 'dob', 'gender', 'phone', 'email'];
+            // Auto-expand contact info section if phone has an error
+            if (validationErrors.phone) {
+                console.log('[NewPatientPage] Auto-expanding Section 2 due to phone error');
+                setIsExtendedOpen(true);
+            }
+
+            const fieldKeys = ['firstName', 'lastName', 'dob', 'gender', 'phone', 'nhiNumber', 'email'];
             const firstFailedKey = fieldKeys.find(k => validationErrors[k]);
             const labels = {
                 firstName: 'first name',
@@ -712,6 +784,7 @@ export default function NewPatientPage() {
                 dob: 'date of birth',
                 gender: 'gender selection',
                 phone: 'contact phone number',
+                nhiNumber: 'CNIC / National ID',
                 email: 'email address'
             };
 
@@ -732,39 +805,53 @@ export default function NewPatientPage() {
             return;
         }
 
+        setIsSubmitting(true);
         try {
             const city = newPatient.city;
             const postcode = newPatient.postcode;
             const fullAddress = [newPatient.address, city, postcode].filter(Boolean).join(', ');
             const docId = doctor?.doctorID || doctor?.doctorId || doctor?.id || 1;
             
+            const allergies = (newPatient.selectedAllergies && newPatient.selectedAllergies.length > 0)
+                ? newPatient.selectedAllergies.join(', ')
+                : 'No Known Drug Allergies (NKDA)';
+
             const combinedNotes = [
-                newPatient.selectedAllergies?.length ? `Medical Alerts: ${newPatient.selectedAllergies.join(', ')}` : '',
+                `Medical Alerts: ${allergies}`,
                 newPatient.medicalNotes
             ].filter(Boolean).join(' | ');
 
+            const phoneNorm = newPatient.phone ? normalizePakistaniPhone(newPatient.phone) : null;
+            const formattedPhone = phoneNorm?.isValid ? phoneNorm.normalized : (newPatient.phone || '');
+            const formattedCnic = newPatient.nhiNumber ? formatCnic(newPatient.nhiNumber) : '';
+
             const payload = { 
                 ...newPatient, 
+                phone: formattedPhone,
+                nhiNumber: formattedCnic,
                 address: fullAddress, 
                 doctorID: docId,
-                email: newPatient.email || `${newPatient.firstName.toLowerCase()}.${newPatient.lastName.toLowerCase()}@dentiaclinic.com`,
+                whatsAppOptIn: Boolean(newPatient.whatsAppOptIn),
+                email: newPatient.email ? newPatient.email.trim() : null,
                 profileImageDataUrl: newPatient.profileImageDataUrl,
                 profileImageMimeType: newPatient.profileImageMimeType,
-                nhiNumber: newPatient.nhiNumber,
                 currentTreatmentPlan: newPatient.currentTreatmentPlan || 'General Consultation'
             };
-            const res = await fetch('/api/patients', {
+            console.log('[NewPatientPage] Dispatching POST /api/patients payload:', { ...payload, profileImageDataUrl: payload.profileImageDataUrl ? '[ATTACHED]' : null });
+            const res = await apiFetch('/api/patients', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
+            console.log('[NewPatientPage] POST /api/patients response status:', res.status);
             if (res.ok) {
                 const created = await res.json();
+                const patientId = created?.patientID || created?.patientId || created?.id || created?.PatientID;
 
                 // Save intake note to clinical logs if provided
-                if (combinedNotes && created.patientID) {
+                if (combinedNotes && patientId) {
                     try {
-                        await fetch(`/api/patients/${created.patientID}/clinical-logs`, {
+                        await apiFetch(`/api/patients/${patientId}/clinical-logs`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -778,11 +865,13 @@ export default function NewPatientPage() {
                     }
                 }
 
-                showToast(`Patient ${created.firstName} registered successfully!`, "success");
-                aiVoice.speak(`Doctor, patient ${created.firstName} ${created.lastName} has been registered successfully.`);
+                showToast(`Patient ${created.firstName || 'Record'} registered successfully!`, "success");
+                try {
+                    aiVoice.speak(`Doctor, patient ${created.firstName || ''} ${created.lastName || ''} has been registered successfully.`);
+                } catch (e) {}
                 setTimeout(() => {
-                    navigate(`/chart/${created.patientID}`);
-                }, 1000);
+                    navigate(patientId ? `/chart/${patientId}` : '/directory');
+                }, 800);
             } else if (res.status === 409) {
                 const errData = await res.json();
                 showToast(`⚠️ ${errData.message}`, "error");
@@ -794,6 +883,16 @@ export default function NewPatientPage() {
                     existingPatientId: errData.existingPatientId,
                     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 }]);
+            } else if (res.status === 400) {
+                const errData = await res.json().catch(() => ({}));
+                if (errData?.error?.fields) {
+                    setErrors(prev => ({ ...prev, ...errData.error.fields }));
+                }
+                const msg = errData?.error?.message || errData.message || "Failed to create patient. Check required fields.";
+                showToast(`⚠️ ${msg}`, "error");
+                try {
+                    aiVoice.speakDoctorError(null, msg);
+                } catch (vErr) {}
             } else {
                 const errMsg = await res.text().catch(() => "");
                 showToast(errMsg || "Failed to create patient. Check required fields.", "error");
@@ -801,7 +900,40 @@ export default function NewPatientPage() {
         } catch (err) {
             console.error(err);
             showToast("Error connecting to server.", "error");
+        } finally {
+            setIsSubmitting(false);
         }
+    };
+
+    const handleResetForm = () => {
+        setNewPatient({ 
+            firstName: '', 
+            lastName: '', 
+            dob: '', 
+            phone: '', 
+            email: '',
+            address: '', 
+            city: '', 
+            postcode: '', 
+            gender: '', 
+            region: 'PK',
+            nhiNumber: '',
+            dentitionType: 'Adult',
+            guardianName: '',
+            guardianRelationship: '',
+            currentTreatmentPlan: 'General Consultation',
+            selectedAllergies: [],
+            medicalNotes: '',
+            profileImageDataUrl: null,
+            profileImageMimeType: null,
+            whatsAppOptIn: false
+        });
+        setErrors({});
+        setTouched({});
+        setChatInput('');
+        setLastAiFillSnapshot(null);
+        setRecentlySyncedField({});
+        showToast("Registration form cleared.", "info");
     };
 
     // Calculate Essential & Optional filled counts
@@ -952,13 +1084,16 @@ export default function NewPatientPage() {
 
                             <div>
                                 <div className="flex items-center gap-2">
-                                    <h3 className="text-sm font-sans font-black text-[#10244B] capitalize leading-tight">
+                                    <h3 
+                                        className="text-sm font-sans font-black text-[#10244B] capitalize leading-tight truncate max-w-[200px] sm:max-w-xs md:max-w-md"
+                                        title={newPatient.firstName ? `${newPatient.firstName} ${newPatient.lastName}` : 'New Patient Profile'}
+                                    >
                                         {newPatient.firstName ? `${newPatient.firstName} ${newPatient.lastName}` : 'New Patient Profile'}
                                     </h3>
                                     <button 
                                         type="button"
                                         onClick={() => fileInputRef.current?.click()}
-                                        className="text-[9.5px] font-extrabold text-[#4A7CD2] bg-white/80 hover:bg-white px-2 py-0.5 rounded-md border border-[#4A7CD2]/30 transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                                        className="text-[9.5px] font-extrabold text-[#4A7CD2] bg-white/80 hover:bg-white px-2 py-0.5 rounded-md border border-[#4A7CD2]/30 transition-all cursor-pointer flex items-center gap-1 shadow-2xs shrink-0"
                                     >
                                         <UploadCloud className="w-2.5 h-2.5" />
                                         {newPatient.profileImageDataUrl ? 'Change Photo' : 'Upload Photo'}
@@ -1005,6 +1140,30 @@ export default function NewPatientPage() {
 
                     {/* Form Body: Scrollable with custom-scrollbar */}
                     <form onSubmit={handleCreatePatient} className="flex-1 overflow-y-auto pr-1.5 space-y-3.5 min-h-0 custom-scrollbar">
+                        
+                        {/* 🛡️ AI Auto-fill Diff Review & Undo Banner (Principle #4: Trust & Control) */}
+                        {lastAiFillSnapshot && (
+                            <div className="bg-gradient-to-r from-cyan-50 to-blue-50 border border-cyan-200/90 rounded-2xl p-3 px-4 flex items-center justify-between text-xs text-cyan-950 shadow-2xs animate-in fade-in duration-200">
+                                <div className="flex items-center gap-2.5">
+                                    <Sparkles className="w-4 h-4 text-cyan-600 shrink-0" />
+                                    <span>
+                                        <strong>AI Smart Intake applied.</strong> Review highlighted fields before saving.
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setNewPatient(lastAiFillSnapshot);
+                                        setLastAiFillSnapshot(null);
+                                        setRecentlySyncedField({});
+                                        showToast("Reverted AI auto-fill to previous values", "info");
+                                    }}
+                                    className="font-bold underline text-cyan-700 hover:text-cyan-900 cursor-pointer ml-3 px-2 py-1 rounded hover:bg-cyan-100/50 transition-colors"
+                                >
+                                    Undo AI Fill
+                                </button>
+                            </div>
+                        )}
                             
                         {/* ============================================================ */}
                         {/* SECTION 1: ESSENTIAL CLINICAL INTAKE (MANDATORY / MUST) */}
@@ -1031,7 +1190,7 @@ export default function NewPatientPage() {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <div className="flex justify-between items-center mb-0.5 ml-1">
-                                        <label className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider">First Name *</label>
+                                        <label htmlFor="pat-firstName" className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider">First Name *</label>
                                         {recentlySyncedField.firstName && (
                                             <span className="text-[8.5px] font-black text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5 animate-pulse">
                                                 <Check className="w-2.5 h-2.5" /> Synced
@@ -1039,8 +1198,11 @@ export default function NewPatientPage() {
                                         )}
                                     </div>
                                     <input 
+                                        id="pat-firstName"
                                         name="firstName"
                                         type="text" 
+                                        maxLength={50}
+                                        aria-invalid={Boolean(errors.firstName && touched.firstName)}
                                         value={newPatient.firstName} 
                                         onBlur={() => handleFieldBlur('firstName')}
                                         onChange={e => {
@@ -1065,7 +1227,7 @@ export default function NewPatientPage() {
                                 </div>
                                 <div>
                                     <div className="flex justify-between items-center mb-0.5 ml-1">
-                                        <label className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider">Last Name *</label>
+                                        <label htmlFor="pat-lastName" className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider">Last Name *</label>
                                         {recentlySyncedField.lastName && (
                                             <span className="text-[8.5px] font-black text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5 animate-pulse">
                                                 <Check className="w-2.5 h-2.5" /> Synced
@@ -1073,8 +1235,11 @@ export default function NewPatientPage() {
                                         )}
                                     </div>
                                     <input 
+                                        id="pat-lastName"
                                         name="lastName"
                                         type="text" 
+                                        maxLength={50}
+                                        aria-invalid={Boolean(errors.lastName && touched.lastName)}
                                         value={newPatient.lastName} 
                                         onBlur={() => handleFieldBlur('lastName')}
                                         onChange={e => {
@@ -1103,7 +1268,7 @@ export default function NewPatientPage() {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <div className="flex justify-between items-center mb-0.5 ml-1">
-                                        <label className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider">Date of Birth *</label>
+                                        <label htmlFor="pat-dob" className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider">Date of Birth *</label>
                                         {recentlySyncedField.dob && (
                                             <span className="text-[8.5px] font-black text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5 animate-pulse">
                                                 <Check className="w-2.5 h-2.5" /> Synced
@@ -1111,8 +1276,10 @@ export default function NewPatientPage() {
                                         )}
                                     </div>
                                     <input 
+                                        id="pat-dob"
                                         name="dob"
                                         type="date" 
+                                        aria-invalid={Boolean(errors.dob && touched.dob)}
                                         value={newPatient.dob} 
                                         onBlur={() => handleFieldBlur('dob')}
                                         onChange={e => {
@@ -1136,7 +1303,7 @@ export default function NewPatientPage() {
                                 </div>
                                 <div>
                                     <div className="flex justify-between items-center mb-0.5 ml-1">
-                                        <label className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider">Gender *</label>
+                                        <label htmlFor="pat-gender" className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider">Gender *</label>
                                         {recentlySyncedField.gender && (
                                             <span className="text-[8.5px] font-black text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5 animate-pulse">
                                                 <Check className="w-2.5 h-2.5" /> Synced
@@ -1145,7 +1312,9 @@ export default function NewPatientPage() {
                                     </div>
                                     <div className="relative">
                                         <select 
+                                            id="pat-gender"
                                             name="gender"
+                                            aria-invalid={Boolean(errors.gender && touched.gender)}
                                             value={newPatient.gender} 
                                             onBlur={() => handleFieldBlur('gender')}
                                             onChange={e => {
@@ -1198,9 +1367,9 @@ export default function NewPatientPage() {
                                 <div className="grid grid-cols-3 gap-2">
                                     <button
                                         type="button"
-                                        onClick={() => setNewPatient(prev => ({ ...prev, dentitionType: 'Permanent' }))}
+                                        onClick={() => setNewPatient(prev => ({ ...prev, dentitionType: 'Adult' }))}
                                         className={`py-1.5 px-2 rounded-xl text-xs font-black transition-all cursor-pointer text-center border ${
-                                            newPatient.dentitionType === 'Permanent'
+                                            newPatient.dentitionType === 'Adult'
                                                 ? 'bg-[#4A7CD2] text-white border-[#4A7CD2] shadow-xs'
                                                 : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                                         }`}
@@ -1348,24 +1517,40 @@ export default function NewPatientPage() {
                                         : 'max-h-0 opacity-0 p-0 pointer-events-none'
                                 }`}
                             >
-                                {/* Phone Number (Optional) */}
-                                <div>
-                                    <div className="flex justify-between items-center mb-0.5 ml-1">
-                                        <label className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider flex items-center gap-1.5">
-                                            <Phone className="w-3 h-3 text-slate-400" /> Phone Number <span className="text-[9.5px] text-slate-400 font-normal lowercase">(optional)</span>
-                                        </label>
-                                        {recentlySyncedField.phone && (
-                                            <span className="text-[8.5px] font-black text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5 animate-pulse">
-                                                <Check className="w-2.5 h-2.5" /> Synced
-                                            </span>
-                                        )}
-                                    </div>
+                                {/* Phone Number (Conditional Requirement) */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <div className="flex justify-between items-center mb-0.5 ml-1">
+                                            <label htmlFor="pat-phone" className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider flex items-center gap-1.5">
+                                                <Phone className="w-3 h-3 text-slate-400" /> 
+                                                <span>Phone Number</span>
+                                                {newPatient.whatsAppOptIn ? (
+                                                    <span className="text-red-500 font-black text-xs" title="Mandatory for WhatsApp Notifications">*</span>
+                                                ) : (
+                                                    <span className="text-[9.5px] text-slate-400 font-normal lowercase">(optional)</span>
+                                                )}
+                                            </label>
+                                            {newPatient.whatsAppOptIn && (
+                                                <span className="text-[8.5px] font-black text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                                    Required for WhatsApp
+                                                </span>
+                                            )}
+                                            {recentlySyncedField.phone && (
+                                                <span className="text-[8.5px] font-black text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5 animate-pulse">
+                                                    <Check className="w-2.5 h-2.5" /> Synced
+                                                </span>
+                                            )}
+                                        </div>
                                     <input 
+                                        id="pat-phone"
                                         name="phone"
                                         type="tel" 
+                                        maxLength={20}
+                                        aria-invalid={Boolean(errors.phone && touched.phone)}
                                         value={newPatient.phone} 
                                         onBlur={() => handleFieldBlur('phone')}
                                         onChange={e => {
+                                            console.log('[NewPatientPage] Phone input updated:', e.target.value);
                                             setNewPatient({...newPatient, phone: e.target.value});
                                             if (errors.phone) setErrors(prev => ({ ...prev, phone: '' }));
                                         }} 
@@ -1374,9 +1559,13 @@ export default function NewPatientPage() {
                                                 ? 'bg-red-50/50 border-red-500 focus:ring-red-400/30 text-red-900 ring-2 ring-red-400/20'
                                                 : recentlySyncedField.phone 
                                                 ? 'bg-emerald-50/70 border-emerald-400 ring-2 ring-emerald-400/20' 
+                                                : newPatient.whatsAppOptIn && !newPatient.phone
+                                                ? 'bg-amber-50/40 border-amber-300 focus:border-amber-500 focus:ring-amber-400/25'
                                                 : 'bg-[#F8FAFC] border-light-teal/50 focus:border-[#4A7CD2] focus:ring-[#4A7CD2]/25'
                                         }`} 
-                                        placeholder={newPatient.region === 'PK' ? "e.g. 0321 4455667 (Optional)" : "e.g. 021 123 4567 (Optional)"} 
+                                        placeholder={newPatient.whatsAppOptIn
+                                            ? (newPatient.region === 'PK' ? "e.g. 0321 4455667 (Required for WhatsApp)" : "e.g. 021 123 4567 (Required for WhatsApp)")
+                                            : (newPatient.region === 'PK' ? "e.g. 0321 4455667 (Optional)" : "e.g. 021 123 4567 (Optional)")} 
                                     />
                                     {errors.phone && touched.phone && (
                                         <p className="text-[10px] font-bold text-red-600 flex items-center gap-1 mt-1 animate-fade-in">
@@ -1385,6 +1574,80 @@ export default function NewPatientPage() {
                                         </p>
                                     )}
                                 </div>
+
+                                <div>
+                                    <div className="flex justify-between items-center mb-0.5 ml-1">
+                                        <label htmlFor="pat-email" className="text-[10.5px] font-black text-dark-slate uppercase tracking-wider flex items-center gap-1.5">
+                                            <Mail className="w-3 h-3 text-slate-400" />
+                                            <span>Email Address</span>
+                                            <span className="text-[9.5px] text-slate-400 font-normal lowercase">(optional)</span>
+                                        </label>
+                                        {recentlySyncedField.email && (
+                                            <span className="text-[8.5px] font-black text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5 animate-pulse">
+                                                <Check className="w-2.5 h-2.5" /> Synced
+                                            </span>
+                                        )}
+                                    </div>
+                                    <input 
+                                        id="pat-email"
+                                        name="email"
+                                        type="email" 
+                                        maxLength={100}
+                                        aria-invalid={Boolean(errors.email && touched.email)}
+                                        value={newPatient.email || ''} 
+                                        onBlur={() => handleFieldBlur('email')}
+                                        onChange={e => {
+                                            setNewPatient({...newPatient, email: e.target.value});
+                                            if (errors.email) setErrors(prev => ({ ...prev, email: '' }));
+                                        }} 
+                                        className={`w-full border rounded-xl px-3 py-2 text-xs text-dark-slate focus:outline-none focus:ring-2 font-bold transition-all ${
+                                            errors.email && touched.email
+                                                ? 'bg-red-50/50 border-red-500 focus:ring-red-400/30 text-red-900 ring-2 ring-red-400/20'
+                                                : recentlySyncedField.email 
+                                                ? 'bg-emerald-50/70 border-emerald-400 ring-2 ring-emerald-400/20' 
+                                                : 'bg-[#F8FAFC] border-light-teal/50 focus:border-[#4A7CD2] focus:ring-[#4A7CD2]/25'
+                                        }`} 
+                                        placeholder="patient@gmail.com (Optional)" 
+                                    />
+                                    {errors.email && touched.email && (
+                                        <p className="text-[10px] font-bold text-red-600 flex items-center gap-1 mt-1 animate-fade-in">
+                                            <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                                            <span>{errors.email}</span>
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+
+                                    {/* WhatsApp Consent Toggle */}
+                                    <div className="mt-2.5">
+                                        <WhatsAppOptInToggle 
+                                            checked={Boolean(newPatient.whatsAppOptIn)}
+                                            onChange={(checked) => {
+                                                console.log('[NewPatientPage] Doctor toggled WhatsApp consent to:', checked);
+                                                setNewPatient(prev => ({ ...prev, whatsAppOptIn: checked }));
+                                                if (checked) {
+                                                    setIsExtendedOpen(true);
+                                                    if (!newPatient.phone || !newPatient.phone.trim()) {
+                                                        setTouched(prev => ({ ...prev, phone: true }));
+                                                        setErrors(prev => ({ ...prev, phone: 'WhatsApp is active! Mobile phone number is required to send notifications.' }));
+                                                        setTimeout(() => {
+                                                            const phoneEl = document.querySelector('input[name="phone"]');
+                                                            if (phoneEl) phoneEl.focus();
+                                                        }, 100);
+                                                    }
+                                                } else {
+                                                    if (!newPatient.phone) {
+                                                        setErrors(prev => {
+                                                            const copy = { ...prev };
+                                                            delete copy.phone;
+                                                            return copy;
+                                                        });
+                                                    }
+                                                }
+                                            }}
+                                            phone={newPatient.phone}
+                                        />
+                                    </div>
 
                                 {/* Street Address Lookup & Autocomplete */}
                                 <div className="relative" ref={addressDropdownRef}>
@@ -1655,14 +1918,36 @@ export default function NewPatientPage() {
                             <span className="text-[11px]">HIPAA & GDPR Encrypted Registry</span>
                         </div>
 
-                        <button 
-                            type="button" 
-                            onClick={handleCreatePatient}
-                            className="px-5 py-2.5 bg-[#4A7CD2] hover:bg-[#3665B7] text-white font-black rounded-xl shadow-md hover:shadow-lg transition-all text-xs cursor-pointer flex items-center gap-1.5 transform hover:scale-[1.02] active:scale-[0.98]"
-                        >
-                            <UserPlus className="w-3.5 h-3.5" />
-                            <span>Create Patient Profile</span>
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={handleResetForm}
+                                className="px-3.5 py-2.5 border border-slate-300 hover:border-slate-400 text-slate-600 hover:text-slate-800 font-bold rounded-xl bg-slate-50 hover:bg-slate-100 transition-all text-xs cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                                title="Clear all input fields"
+                            >
+                                <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                                <span>Clear Form</span>
+                            </button>
+
+                            <button 
+                                type="button" 
+                                disabled={isSubmitting}
+                                onClick={handleCreatePatient}
+                                className={`px-5 py-2.5 bg-[#4A7CD2] hover:bg-[#3665B7] text-white font-black rounded-xl shadow-md hover:shadow-lg transition-all text-xs cursor-pointer flex items-center gap-1.5 transform hover:scale-[1.02] active:scale-[0.98] ${isSubmitting ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            >
+                                {isSubmitting ? (
+                                    <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        <span>Saving Profile...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <UserPlus className="w-3.5 h-3.5" />
+                                        <span>Create Patient Profile</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
 
                 </div>
@@ -1758,6 +2043,16 @@ export default function NewPatientPage() {
                                                     <UserCheck className="w-3.5 h-3.5" /> View Existing Dental Chart (#{m.existingPatientId})
                                                 </button>
                                             </div>
+                                        )}
+
+                                        {!isDoc && (
+                                            <AIBadgeAndActions
+                                                promptId="patient-intake-extractor"
+                                                version="1.0.0"
+                                                feature="intake"
+                                                textToCopy={m.text}
+                                                className="mt-2"
+                                            />
                                         )}
 
                                         <span className="text-[8px] text-muted-text block mt-1 text-right">{m.time}</span>

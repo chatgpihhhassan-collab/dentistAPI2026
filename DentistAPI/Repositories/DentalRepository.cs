@@ -65,6 +65,9 @@ namespace DentistAPI.Repositories
 
                     IF COL_LENGTH('dentist.DentalNotes', 'DentitionCategory') IS NULL
                         EXEC('ALTER TABLE [dentist].[DentalNotes] ADD [DentitionCategory] NVARCHAR(20) NULL');
+
+                    IF COL_LENGTH('dentist.Appointments', 'Notes') IS NULL
+                        EXEC('ALTER TABLE [dentist].[Appointments] ADD [Notes] NVARCHAR(MAX) NULL');
                 ");
 
                 // 3. Enlarge column widths
@@ -771,6 +774,10 @@ namespace DentistAPI.Repositories
 
         public async Task<int> UpdatePatientAsync(Patient patient)
         {
+            if (patient == null) return 0;
+            if (patient.FirstName != null && patient.FirstName.Length > 50) patient.FirstName = patient.FirstName.Substring(0, 50).Trim();
+            if (patient.LastName != null && patient.LastName.Length > 50) patient.LastName = patient.LastName.Substring(0, 50).Trim();
+
             using var connection = CreateConnection();
             bool hasWhatsAppCol = await connection.ExecuteScalarAsync<int>(@"
                 SELECT COUNT(*) FROM sys.columns 
@@ -938,20 +945,31 @@ namespace DentistAPI.Repositories
                     Comments = comments 
                 }, transaction);
 
-                // Insert Treatment History
-                string historyQuery = @"
-                    INSERT INTO [dentist].[TreatmentHistory] (PatientID, DoctorID, ToothNumber, ToothKey, DentitionCategory, TreatmentPerformed, Comments)
-                    VALUES (@PatientID, @DoctorID, @ToothNumber, @ToothKey, @DentitionCategory, @Treatment, @Comments)";
-                
-                await connection.ExecuteAsync(historyQuery, new { 
-                    PatientID = patientId, 
-                    DoctorID = doctorId, 
-                    ToothNumber = toothNumber, 
-                    ToothKey = effectiveToothKey, 
-                    DentitionCategory = dentitionCategory, 
-                    Treatment = treatment, 
-                    Comments = comments 
-                }, transaction);
+                // Insert Treatment History safely without rolling back TeethState
+                try
+                {
+                    if (!string.Equals(treatment, "Healthy", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(treatment))
+                    {
+                        string historyQuery = @"
+                            INSERT INTO [dentist].[TreatmentHistory] (PatientID, DoctorID, ToothNumber, ToothKey, DentitionCategory, TreatmentPerformed, Comments)
+                            VALUES (@PatientID, @DoctorID, @ToothNumber, @ToothKey, @DentitionCategory, @Treatment, @Comments)";
+                        
+                        await connection.ExecuteAsync(historyQuery, new { 
+                            PatientID = patientId, 
+                            DoctorID = doctorId, 
+                            ToothNumber = toothNumber, 
+                            ToothKey = effectiveToothKey, 
+                            DentitionCategory = dentitionCategory, 
+                            Treatment = treatment, 
+                            Comments = comments ?? ""
+                        }, transaction);
+                    }
+                }
+                catch (Exception thEx)
+                {
+                    // Treatment history log failure must never prevent saving the patient's core odontogram state
+                    Console.WriteLine($"[TeethState] Non-fatal notice: TreatmentHistory log omitted: {thEx.Message}");
+                }
 
                 transaction.Commit();
             }
@@ -1341,11 +1359,7 @@ namespace DentistAPI.Repositories
                 dobVal = d;
             }
 
-            string email = request.Email;
-            if (string.IsNullOrEmpty(email))
-            {
-                email = $"{request.FirstName.ToLower().Trim()}.{request.LastName.ToLower().Trim()}@dentiaclinic.com";
-            }
+            string? email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim();
 
             string sql = @"
                 INSERT INTO [dentist].[Patients] (

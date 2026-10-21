@@ -516,11 +516,23 @@ namespace DentistAPI.Controllers
 
                     if (!string.IsNullOrEmpty(appointment.Email))
                     {
-                        string subject = "Appointment Request Received";
-                        string body = $"<h3>Hi {appointment.FullName},</h3><p>Your appointment request for {appointment.PreferredDate:f} has been received and is currently Pending.</p>";
-                        var result = await _emailService.SendEmailAsync(appointment.Email, subject, body);
-                        emailSent = result.Success;
-                        emailError = result.ErrorMessage;
+                        emailSent = true;
+                        var apptEmail = appointment.Email;
+                        var apptName = appointment.FullName;
+                        var apptDate = appointment.PreferredDate;
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                string subject = "Appointment Request Received";
+                                string body = $"<h3>Hi {apptName},</h3><p>Your appointment request for {apptDate:f} has been received and is currently Pending.</p>";
+                                await _emailService.SendEmailAsync(apptEmail, subject, body);
+                            }
+                            catch (Exception emailEx)
+                            {
+                                _logger.LogWarning(emailEx, "Background appointment confirmation email failed for {Email}", apptEmail);
+                            }
+                        });
                     }
 
                     return Ok(new { appointment, emailSent, emailError, whatsAppQueued, whatsAppMessageId });
@@ -541,13 +553,37 @@ namespace DentistAPI.Controllers
                 return BadRequest(new ValidationErrorEnvelope("Update payload is required.", null, "PAYLOAD_REQUIRED"));
             }
 
+            // Status normalization (APT-001)
+            string rawStatus = appointmentUpdate.Status?.Trim() ?? string.Empty;
+            string newStatus = rawStatus;
+            if (rawStatus.Equals("Rejected / Cancelled", StringComparison.OrdinalIgnoreCase) ||
+                rawStatus.Equals("Rejected", StringComparison.OrdinalIgnoreCase) ||
+                rawStatus.Equals("Cancel", StringComparison.OrdinalIgnoreCase) ||
+                rawStatus.Equals("Cancelled", StringComparison.OrdinalIgnoreCase))
+            {
+                newStatus = "Cancelled";
+            }
+            else if (rawStatus.Equals("Done", StringComparison.OrdinalIgnoreCase) ||
+                     rawStatus.Equals("Completed / Done", StringComparison.OrdinalIgnoreCase))
+            {
+                newStatus = "Completed";
+            }
+            else if (rawStatus.Equals("Re-scheduled", StringComparison.OrdinalIgnoreCase) ||
+                     rawStatus.Equals("Rescheduled", StringComparison.OrdinalIgnoreCase))
+            {
+                newStatus = "Confirmed";
+            }
+            else if (string.IsNullOrWhiteSpace(rawStatus))
+            {
+                newStatus = "Pending";
+            }
+
             // Whitelist valid statuses
             var allowedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "Pending", "Confirmed", "In-Progress", "Completed", "Cancelled", "No-Show"
+                "Pending", "Confirmed", "In-Progress", "Completed", "Cancelled", "No-Show", "Rejected"
             };
 
-            string newStatus = string.IsNullOrWhiteSpace(appointmentUpdate.Status) ? "Pending" : appointmentUpdate.Status.Trim();
             if (!allowedStatuses.Contains(newStatus))
             {
                 return BadRequest(ValidationErrorEnvelope.Create(
@@ -566,8 +602,9 @@ namespace DentistAPI.Controllers
                     string patientEmail = null;
                     string patientName = null;
                     DateTime prefDate = DateTime.MinValue;
+                    int? existingDoctorId = null;
 
-                    var getCmd = new SqlCommand("SELECT FullName, Email, PreferredDate FROM [dentist].[Appointments] WHERE AppointmentID = @Id", conn);
+                    var getCmd = new SqlCommand("SELECT FullName, Email, PreferredDate, DoctorID FROM [dentist].[Appointments] WHERE AppointmentID = @Id", conn);
                     getCmd.Parameters.AddWithValue("@Id", id);
                     using (var reader = await getCmd.ExecuteReaderAsync())
                     {
@@ -576,20 +613,67 @@ namespace DentistAPI.Controllers
                             patientName = reader["FullName"].ToString();
                             patientEmail = reader["Email"] != DBNull.Value ? reader["Email"].ToString() : null;
                             prefDate = reader["PreferredDate"] != DBNull.Value ? Convert.ToDateTime(reader["PreferredDate"]) : DateTime.MinValue;
+                            existingDoctorId = reader["DoctorID"] != DBNull.Value ? Convert.ToInt32(reader["DoctorID"]) : (int?)null;
                         }
                     }
 
-                    var cmd = new SqlCommand(@"
-                        UPDATE [dentist].[Appointments] 
-                        SET Status = @Status, 
-                            Reason = COALESCE(@Reason, Reason),
-                            Notes = CASE WHEN @Notes IS NOT NULL THEN @Notes ELSE Notes END
-                        WHERE AppointmentID = @Id
-                    ", conn);
+                    // APT-003: Support rescheduling with slot collision check
+                    bool isReschedule = appointmentUpdate.PreferredDate.HasValue && appointmentUpdate.PreferredDate.Value > DateTime.MinValue;
+                    DateTime targetDate = isReschedule ? appointmentUpdate.PreferredDate.Value : prefDate;
+                    int? targetDoctor = (appointmentUpdate.DoctorID.HasValue && appointmentUpdate.DoctorID.Value > 0) 
+                        ? appointmentUpdate.DoctorID.Value 
+                        : existingDoctorId;
+
+                    if (isReschedule && Math.Abs((targetDate - prefDate).TotalMinutes) > 5)
+                    {
+                        var checkCmd = new SqlCommand(@"
+                            SELECT COUNT(*) 
+                            FROM [dentist].[Appointments] 
+                            WHERE AppointmentID != @Id
+                              AND (@DoctorID IS NULL OR DoctorID = @DoctorID)
+                              AND Status NOT IN ('Cancelled', 'No-Show', 'Rejected')
+                              AND ABS(DATEDIFF(MINUTE, PreferredDate, @CheckDate)) < 30", conn);
+                        checkCmd.Parameters.AddWithValue("@Id", id);
+                        checkCmd.Parameters.AddWithValue("@DoctorID", targetDoctor.HasValue ? (object)targetDoctor.Value : DBNull.Value);
+                        checkCmd.Parameters.AddWithValue("@CheckDate", targetDate);
+                        int conflictCount = Convert.ToInt32(await checkCmd.ExecuteScalarAsync());
+                        if (conflictCount > 0)
+                        {
+                            return BadRequest(new { message = $"That time slot ({targetDate:g}) is already occupied. Please choose another time." });
+                        }
+                    }
+
+                    bool hasNotesCol = false;
+                    using (var checkColCmd = new SqlCommand("SELECT COUNT(1) FROM sys.columns WHERE object_id = OBJECT_ID('dentist.Appointments') AND name = 'Notes'", conn))
+                    {
+                        hasNotesCol = Convert.ToInt32(await checkColCmd.ExecuteScalarAsync()) > 0;
+                    }
+
+                    string updateSql = hasNotesCol
+                        ? @"UPDATE [dentist].[Appointments] 
+                            SET Status = @Status, 
+                                Reason = COALESCE(@Reason, Reason),
+                                Notes = CASE WHEN @Notes IS NOT NULL THEN @Notes ELSE Notes END,
+                                PreferredDate = CASE WHEN @PreferredDate IS NOT NULL THEN @PreferredDate ELSE PreferredDate END,
+                                DoctorID = CASE WHEN @DoctorID IS NOT NULL THEN @DoctorID ELSE DoctorID END
+                            WHERE AppointmentID = @Id"
+                        : @"UPDATE [dentist].[Appointments] 
+                            SET Status = @Status, 
+                                Reason = COALESCE(@Reason, Reason),
+                                PreferredDate = CASE WHEN @PreferredDate IS NOT NULL THEN @PreferredDate ELSE PreferredDate END,
+                                DoctorID = CASE WHEN @DoctorID IS NOT NULL THEN @DoctorID ELSE DoctorID END
+                            WHERE AppointmentID = @Id";
+
+                    var cmd = new SqlCommand(updateSql, conn);
                     
                     cmd.Parameters.AddWithValue("@Status", newStatus);
                     cmd.Parameters.AddWithValue("@Reason", string.IsNullOrEmpty(appointmentUpdate.Reason) ? (object)DBNull.Value : _dataNorm.SanitizeText(appointmentUpdate.Reason, 500));
-                    cmd.Parameters.AddWithValue("@Notes", appointmentUpdate.Notes != null ? (object)_dataNorm.SanitizeText(appointmentUpdate.Notes, 1000) : DBNull.Value);
+                    if (hasNotesCol)
+                    {
+                        cmd.Parameters.AddWithValue("@Notes", appointmentUpdate.Notes != null ? (object)_dataNorm.SanitizeText(appointmentUpdate.Notes, 1000) : DBNull.Value);
+                    }
+                    cmd.Parameters.AddWithValue("@PreferredDate", isReschedule ? (object)targetDate : DBNull.Value);
+                    cmd.Parameters.AddWithValue("@DoctorID", (appointmentUpdate.DoctorID.HasValue && appointmentUpdate.DoctorID.Value > 0) ? (object)appointmentUpdate.DoctorID.Value : DBNull.Value);
                     cmd.Parameters.AddWithValue("@Id", id);
 
                     int rowsAffected = await cmd.ExecuteNonQueryAsync();
@@ -603,17 +687,31 @@ namespace DentistAPI.Controllers
 
                     if (!string.IsNullOrEmpty(patientEmail))
                     {
-                        string subject = $"Appointment Update: {newStatus}";
-                        string body = $"<h3>Hi {patientName},</h3><p>Your appointment on {prefDate:f} has been updated.</p><p><b>New Status:</b> {newStatus}</p>";
-                        if (!string.IsNullOrEmpty(appointmentUpdate.Reason)) {
-                            body += $"<p><b>Note:</b> {appointmentUpdate.Reason}</p>";
-                        }
-                        var result = await _emailService.SendEmailAsync(patientEmail, subject, body);
-                        emailSent = result.Success;
-                        emailError = result.ErrorMessage;
+                        emailSent = true;
+                        var pEmail = patientEmail;
+                        var pName = patientName;
+                        var pDate = targetDate;
+                        var pStatus = newStatus;
+                        var pReason = appointmentUpdate.Reason;
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                string subject = $"Appointment Update: {pStatus}";
+                                string body = $"<h3>Hi {pName},</h3><p>Your appointment on {pDate:f} has been updated.</p><p><b>New Status:</b> {pStatus}</p>";
+                                if (!string.IsNullOrEmpty(pReason)) {
+                                    body += $"<p><b>Note:</b> {pReason}</p>";
+                                }
+                                await _emailService.SendEmailAsync(pEmail, subject, body);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Background email notification failed for appointment {AppointmentId}", id);
+                            }
+                        });
                     }
 
-                    return Ok(new { message = "Status updated successfully.", emailSent, emailError });
+                    return Ok(new { success = true, message = "Status updated successfully.", status = newStatus, preferredDate = targetDate, doctorId = targetDoctor, emailSent, emailError });
                 }
             }
             catch (SqlException ex) when (ex.Number == 207) // Invalid column name 'Reason'

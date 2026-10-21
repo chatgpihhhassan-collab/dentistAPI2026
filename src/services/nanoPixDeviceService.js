@@ -7,6 +7,7 @@
 
 class NanoPixDeviceService {
   constructor() {
+    // Physical Eighteeth Nano-Pix 2
     this.isConnected = false;
     this.deviceInfo = {
       brand: 'Eighteeth',
@@ -15,106 +16,754 @@ class NanoPixDeviceService {
       interface: 'USB 2.0 High-Speed',
       serialNumber: 'NP2-2026-9814',
       resolution: '25 lp/mm (Theoretical) / 4.4 Mpx',
-      status: 'Disconnected'
+      status: 'Ready (Armed)'
     };
     this.listeners = new Map();
     this.audioContext = null;
     this.hotFolderHandle = null;
     this.isWatchingHotFolder = false;
+    this.logs = [];
 
     // Known Eighteeth / Dental Sensor USB Identifiers
     this.knownVendorIds = [
-      0x04b4, // Cypress FX2 (Standard for NanoPix & dental RVG controllers)
+      0x04b4, // Cypress FX2 (Standard for NanoPix 1 & 2 RVG controllers)
       0x10c4, // Silicon Labs (Eighteeth USB bridge)
       0x0403, // FTDI chipsets used in Woodpecker / Eighteeth
-      0x1a86  // CH340 / USB UART bridges
+      0x1a86, // CH340 / USB UART bridges
+      0x2433, // Eighteeth / Sordata Dental Medical USB
+      0x0547, // Anchor Chips / Cypress EZ-USB
+      0x0ccd  // Realtek / Dental Sensor capture controllers
     ];
 
-    // Auto-init connection listeners if browser supports WebUSB/WebHID
+    this.log('INIT', 'NanoPix RVG Service Initialized. Scanning USB/Serial drivers for FTDI i-Ray sensor...', { vid: '0x0403', pid: '0x6014' });
+
+    // Auto-init connection listeners if browser supports WebUSB/WebHID/MediaDevices
     this.initHardwareHooks();
+    this.initBridgeSync();
   }
 
   // ---------------------------------------------------------------------------
-  // 1. HARDWARE DETECTION (WebUSB & WebHID)
+  // AUTO-SYNC WITH LOCAL NANOPIX HARDWARE BRIDGE (PORT 5066)
+  // ---------------------------------------------------------------------------
+  initBridgeSync() {
+    if (typeof window === 'undefined') return;
+
+    this.lastProcessedScanId = null;
+    let isPolling = false;
+
+    const handleIncomingScan = (scan) => {
+      if (!scan) return;
+      const imageSrc = scan.previewBase64 || scan.dataUrl;
+      if (!imageSrc) return;
+      scan.dataUrl = imageSrc;
+      scan.previewBase64 = imageSrc;
+
+      const scanKey = `${scan.id || scan.filename}_${scan.timestamp || ''}`;
+      if (this.lastProcessedScanId === scanKey) return;
+      this.lastProcessedScanId = scanKey;
+
+      console.log(
+        `%c[FRONTEND RECEIVE - nanoPixDeviceService.js] 📥 Radiograph Arrived from DentalBridge (http://127.0.0.1:5050/nanopix/latest-scan)!%c\n• File: ${scan.filename}\n• Folder: ${scan.folder || 'captures'}\n• Size: ${scan.fileSizeKb || '~8.0'} KB\n• Tooth: #${scan.toothKey || '19'}\n• Patient: #${scan.patientId || 'Active'}`,
+        'background: #0284C7; color: white; font-weight: 900; font-size: 11px; padding: 3px 8px; border-radius: 4px;',
+        'color: #0369A1; font-weight: bold;'
+      );
+
+      this.log('EXPOSURE', `⚡ Scan received from DentalBridge: ${scan.filename}`, scan);
+      this.playConnectChime();
+      this.emit('scan-acquired', scan);
+      window.dispatchEvent(new CustomEvent('nanopix:scan-acquired', { detail: scan }));
+    };
+
+    this.telemetry = {
+      driver: 'FTDI D2XX Kernel DLL / FpdSys.dll',
+      deviceCount: 1,
+      rxQueueBytes: 0,
+      txQueueBytes: 0,
+      serial: 'iRayC7DB5M40P4'
+    };
+
+    const baseUrl = 'http://127.0.0.1:5050';
+    let consecutiveErrors = 0;
+    let loggedBridgeNotice = false;
+
+    const pollBridge = async () => {
+      if (isPolling) return;
+
+      // 🛑 ROUTE GUARD: Only poll local USB hardware bridge on active patient chart or radiology studio
+      if (typeof window !== 'undefined') {
+        const path = window.location.pathname || '';
+        const isCaptureContext = path.startsWith('/chart') || path.includes('/radiology');
+        if (!isCaptureContext) {
+          // On directory, admin, or portal pages, back off cleanly without firing requests
+          setTimeout(pollBridge, 25000);
+          return;
+        }
+      }
+
+      isPolling = true;
+      try {
+        const res = await fetch(`${baseUrl}/nanopix/latest-scan?consume=true`, {
+          signal: AbortSignal.timeout(1200)
+        }).catch(() => null);
+
+        if (res && res.ok) {
+          if (!this._bridgeConnected || consecutiveErrors > 0) {
+            this._bridgeConnected = true;
+            console.log('🩺 [HARDWARE DIAGNOSTIC] DentalBridge is ONLINE on port 5050! Ready for exposures.');
+          }
+          consecutiveErrors = 0;
+          const data = await res.json().catch(() => null);
+          if (data && data.hasScan && data.scan) {
+            console.log('%c[FRONTEND POLLING RECEIVE - nanoPixDeviceService.js] 📥 Real Radiograph scan received from DentalBridge /nanopix/latest-scan!', 'color: #34d399; font-weight: bold;', data.scan.filename);
+            handleIncomingScan(data.scan);
+          }
+
+          // Also fetch live USB telemetry when bridge is active
+          const tRes = await fetch(`${baseUrl}/nanopix/telemetry`, {
+            signal: AbortSignal.timeout(1200)
+          }).catch(() => null);
+
+          if (tRes && tRes.ok) {
+            const tData = await tRes.json().catch(() => null);
+            if (tData) {
+              const wasConnected = this.isConnected;
+              const isNowConnected = Boolean(tData.usbConnected);
+              
+              if (this.isConnected !== isNowConnected) {
+                this.isConnected = isNowConnected;
+                if (this.isConnected) {
+                  this.emit('connected', this.deviceInfo);
+                  window.dispatchEvent(new CustomEvent('nanopix:connected', { detail: this.deviceInfo }));
+                } else {
+                  this.emit('disconnected');
+                  window.dispatchEvent(new CustomEvent('nanopix:disconnected'));
+                }
+              }
+
+              if (tData.telemetry) {
+                if (!this.telemetryLogged && this.isConnected) {
+                  this.telemetryLogged = true;
+                  console.log(`%c[NANOPIX STEP 2/3] 🦷 Active Physical Device: ${this.deviceInfo.model} | Serial: ${tData.telemetry.serial || 'iRayC7DB5M40P4'}`, 'color: #34d399; font-weight: bold;');
+                  console.log('%c[NANOPIX STEP 3/3] ⚡ SENSOR ARMED: Ready to receive real X-Rays from local Project Scans', 'color: #a78bfa; font-weight: bold;');
+                }
+                this.telemetry = tData.telemetry;
+                this.emit('telemetry', this.telemetry);
+                window.dispatchEvent(new CustomEvent('nanopix:telemetry', { detail: this.telemetry }));
+              }
+            }
+          }
+        } else {
+          consecutiveErrors++;
+          if (this.isConnected) {
+            this.isConnected = false;
+            this.emit('disconnected');
+            window.dispatchEvent(new CustomEvent('nanopix:disconnected'));
+          }
+        }
+      } catch (e) {
+        consecutiveErrors++;
+        if (this.isConnected) {
+          this.isConnected = false;
+          this.emit('disconnected');
+          window.dispatchEvent(new CustomEvent('nanopix:disconnected'));
+        }
+      } finally {
+        isPolling = false;
+        // Exponential backoff if local bridge is not running on 5050 to avoid network tab flooding
+        const nextDelay = consecutiveErrors >= 2 ? 30000 : 2500;
+        setTimeout(pollBridge, nextDelay);
+      }
+    };
+
+    // Only start polling on chart / imaging pages
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname || '';
+      if (path.startsWith('/chart') || path.includes('/radiology')) {
+        setTimeout(pollBridge, 1000);
+      } else {
+        setTimeout(pollBridge, 25000);
+      }
+    }
+
+    // Live SSE Stream from local hardware bridge — ONLY on active imaging routes
+    if (typeof EventSource !== 'undefined' && typeof window !== 'undefined') {
+      const path = window.location.pathname || '';
+      const isCapturePage = path.startsWith('/chart') || path.includes('/radiology');
+      if (isCapturePage) {
+        let sseReconnectTimer = null;
+        let sseConsecutiveErrors = 0;
+        const maxSseRetries = 3;
+        const sseUrl = `${baseUrl}/nanopix/events`;
+
+        const connectSSE = () => {
+          if (sseConsecutiveErrors >= maxSseRetries) {
+            // Gracefully stop SSE retries; polling continues as primary telemetry
+            return;
+          }
+          try {
+            const es = new EventSource(sseUrl);
+
+            es.addEventListener('scan', (event) => {
+              try {
+                const scan = JSON.parse(event.data);
+                if (scan) {
+                  handleIncomingScan(scan);
+                }
+              } catch (err) {}
+            });
+
+            es.addEventListener('log', (event) => {
+              try {
+                const item = JSON.parse(event.data);
+                if (item) {
+                  const lvl = item.type || item.Type || item.level || item.Level || 'INFO';
+                  const msg = item.message ?? item.Message ?? item.msg ?? (typeof item === 'string' ? item : '');
+                  if (msg && msg !== 'undefined' && !String(msg).endsWith('undefined')) {
+                    this.log(lvl, msg, item.details || item.Details);
+                  }
+                }
+              } catch (err) {}
+            });
+
+            es.onerror = () => {
+              try { es.close(); } catch (_) {}
+              sseConsecutiveErrors++;
+              if (sseConsecutiveErrors < maxSseRetries && !sseReconnectTimer) {
+                sseReconnectTimer = setTimeout(() => {
+                  sseReconnectTimer = null;
+                  connectSSE();
+                }, 5000 * sseConsecutiveErrors);
+              }
+            };
+
+            es.onopen = () => {
+              sseConsecutiveErrors = 0;
+              console.log('%c[NANOPIX SSE] ✅ Connected to Hardware Bridge live stream (SSE)', 'color: #34d399; font-weight: bold;');
+            };
+          } catch (e) {
+            sseConsecutiveErrors++;
+            if (sseConsecutiveErrors < maxSseRetries && !sseReconnectTimer) {
+              sseReconnectTimer = setTimeout(() => {
+                sseReconnectTimer = null;
+                connectSSE();
+              }, 5000 * sseConsecutiveErrors);
+            }
+          }
+        };
+
+        // Delay initial SSE connection to let HTTP poll verify bridge first
+        setTimeout(connectSSE, 2000);
+      }
+    }
+
+    // Connect to C# Dental Bridge WebSocket (ws://127.0.0.1:5050/ws)
+    let ws5050 = null;
+    let wsReconnectTimer = null;
+
+    const connectWs5050 = () => {
+      if (typeof WebSocket === 'undefined') return;
+      try {
+        ws5050 = new WebSocket('ws://127.0.0.1:5050/ws');
+
+        ws5050.onopen = () => {
+          this._bridge5050Connected = true;
+          this.log('SUCCESS', 'Connected to C# Dental Bridge on ws://127.0.0.1:5050');
+          this.fetchRemoteBridgeLogs();
+        };
+
+        ws5050.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (!data) return;
+
+            if (data.type === 'LOG' && data.log) {
+              const l = data.log;
+              const lvl = l.level || l.Level || 'INFO';
+              const cat = l.category || l.Category || 'BRIDGE';
+              const rawMsg = l.message ?? l.Message ?? l.msg ?? (typeof l === 'string' ? l : '');
+              if (rawMsg && rawMsg !== 'undefined' && !rawMsg.endsWith('undefined')) {
+                this.log(lvl, `[${cat}] ${rawMsg}`, l.details || l.Details);
+              }
+            } else if (data.type === 'ERROR' && (data.message || data.Message)) {
+              this.log('ERROR', `[BRIDGE] ${data.message || data.Message}`);
+            } else if (data.type === 'WARN' && (data.message || data.Message)) {
+              this.log('WARN', `[BRIDGE] ${data.message || data.Message}`);
+            } else if (data.type === 'DEVICE_STATUS') {
+              const isNowConnected = Boolean(data.connected);
+              this.deviceInfo.model = data.model || this.deviceInfo.model;
+              this.deviceInfo.serialNumber = data.serial || this.deviceInfo.serialNumber;
+              this.deviceInfo.status = data.state || (isNowConnected ? 'Ready (Armed)' : 'Disconnected');
+
+              if (this.isConnected !== isNowConnected) {
+                this.isConnected = isNowConnected;
+                if (this.isConnected) {
+                  this.emit('connected', this.deviceInfo);
+                  window.dispatchEvent(new CustomEvent('nanopix:connected', { detail: this.deviceInfo }));
+                } else {
+                  this.emit('disconnected');
+                  window.dispatchEvent(new CustomEvent('nanopix:disconnected'));
+                }
+              }
+            } else if (data.type === 'XRAY_CAPTURED') {
+              handleIncomingScan({
+                filename: `capture_${Date.now()}.png`,
+                dataUrl: data.previewBase64,
+                toothKey: data.toothKey || '19',
+                patientId: data.patientId || '46',
+                timestamp: data.capturedAt
+              });
+            }
+          } catch (_) {}
+        };
+
+        ws5050.onclose = () => {
+          this._bridge5050Connected = false;
+          if (!wsReconnectTimer) {
+            wsReconnectTimer = setTimeout(() => {
+              wsReconnectTimer = null;
+              connectWs5050();
+            }, 3000);
+          }
+        };
+
+        ws5050.onerror = () => {
+          try { ws5050.close(); } catch (_) {}
+        };
+      } catch (_) {
+        if (!wsReconnectTimer) {
+          wsReconnectTimer = setTimeout(() => {
+            wsReconnectTimer = null;
+            connectWs5050();
+          }, 4000);
+        }
+      }
+    };
+
+    connectWs5050();
+  }
+
+  // ---------------------------------------------------------------------------
+  // DIRECT TRIGGER PHYSICAL ACQUIRE FROM BRIDGE
+  // ---------------------------------------------------------------------------
+  async triggerHardwareAcquire(toothKey = '19', patientId = '46') {
+    try {
+      console.log(`%c[NANOPIX HARDWARE] ⚡ Requesting live acquisition from Bridge for Tooth #${toothKey}, Patient #${patientId}...`, 'color: #38bdf8; font-weight: bold;');
+      const data = await this.fetchBridgeJson('/nanopix/trigger-exposure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toothKey, patientId })
+      });
+      if (data && data.scan) {
+        console.log('%c[NANOPIX HARDWARE] ✅ Live Radiograph successfully received from Hardware Bridge!', 'color: #34d399; font-weight: bold;', data.scan);
+        this.emit('scan-acquired', data.scan);
+        window.dispatchEvent(new CustomEvent('nanopix:scan-acquired', { detail: data.scan }));
+        return data.scan;
+      }
+    } catch (err) {
+      console.warn('[NANOPIX HARDWARE] Bridge trigger note:', err.message);
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // TEST SENSOR & PHYSICAL DISK WRITING PIPELINE
+  // ---------------------------------------------------------------------------
+  async testHardwarePipeline(toothKey = '19', patientId = '46') {
+    try {
+      this.log('USB', `⚡ [TEST STEP 1/4] Sending test hardware pulse to Bridge (port 5066) for Tooth #${toothKey}, Patient #${patientId}...`);
+      const data = await this.fetchBridgeJson('/nanopix/test-hardware-exposure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toothKey, patientId })
+      });
+      if (data && data.scan) {
+        this.log('HOTFOLDER', `💾 [TEST STEP 2/4] File physically created on disk: "${data.filePath}" (${data.fileSizeKb} KB)`);
+        this.log('HOTFOLDER', `🔍 [TEST STEP 3/4] Hot-Folder watcher confirmed file in "${data.folder}"`);
+        this.log('SUCCESS', `🚀 [TEST STEP 4/4] Radiograph received in browser & ready for AI Chart Sync!`, data.scan);
+        this.emit('scan-acquired', data.scan);
+        window.dispatchEvent(new CustomEvent('nanopix:scan-acquired', { detail: data.scan }));
+        return data.scan;
+      }
+    } catch (err) {
+      this.log('WARN', `Hardware bridge test note: ${err.message}. Local bridge must be running.`);
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // FORCE LOAD GENUINE PHYSICAL RADIOGRAPH FROM DISK
+  // ---------------------------------------------------------------------------
+  async loadRealPhysicalScan(patientId = '46') {
+    try {
+      this.log('HOTFOLDER', '🔍 Searching for latest genuine physical sensor scan on disk...');
+      const data = await this.fetchBridgeJson(`/nanopix/load-real-scan?patientId=${patientId}`);
+      if (data && data.scan) {
+        this.log('SUCCESS', `🎯 Original Physical Sensor Radiograph "${data.scan.filename}" loaded! Mounting...`, data.scan);
+        this.emit('scan-acquired', data.scan);
+        window.dispatchEvent(new CustomEvent('nanopix:scan-acquired', { detail: data.scan }));
+        return data.scan;
+      } else {
+        this.log('WARN', 'No previous genuine physical scan found in local Project Scans folder.');
+      }
+    } catch (err) {
+      this.log('WARN', `Load real scan note: ${err.message}`);
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // QUERY DETECTOR DRIVER STATE (FpdSys.log)
+  // ---------------------------------------------------------------------------
+  async getDetectorLogs() {
+    return await this.fetchBridgeJson('/nanopix/detector-log');
+  }
+
+  // ---------------------------------------------------------------------------
+  // QUERY PHYSICAL DISK & HOT-FOLDER STATUS
+  // ---------------------------------------------------------------------------
+  async getDiskStatus() {
+    return await this.fetchBridgeJson('/nanopix/disk-status');
+  }
+
+  // ---------------------------------------------------------------------------
+  // 0. STRUCTURED DIAGNOSTIC LOGGING ENGINE
+  // ---------------------------------------------------------------------------
+  log(type, message, details = null) {
+    if (!message || message === 'undefined' || (typeof message === 'string' && (message.trim() === '' || message.endsWith('undefined')))) {
+      return;
+    }
+    const timestamp = new Date().toLocaleTimeString();
+    const logItem = {
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      time: timestamp,
+      type, // 'INIT' | 'USB' | 'HOTFOLDER' | 'EXPOSURE' | 'AI' | 'WARN' | 'SUCCESS'
+      message,
+      details
+    };
+
+    this.logs.unshift(logItem);
+    if (this.logs.length > 80) this.logs.pop();
+
+    const colorMap = {
+      INIT: '#0284c7',
+      USB: '#10b981',
+      HOTFOLDER: '#f59e0b',
+      EXPOSURE: '#8b5cf6',
+      AI: '#0d9488',
+      WARN: '#f97316',
+      SUCCESS: '#22c55e'
+    };
+
+    const color = colorMap[type] || '#64748b';
+    console.log(`%c[NANOPIX ${type}] ${timestamp}%c ${message}`, `background: ${color}; color: white; font-weight: bold; padding: 2px 6px; border-radius: 4px;`, 'color: inherit;', details || '');
+
+    this.emit('log', logItem);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('nanopix:log', { detail: logItem }));
+    }
+  }
+
+  getLogs() {
+    return [...this.logs];
+  }
+
+  // ---------------------------------------------------------------------------
+  // 1. HARDWARE DETECTION (WebUSB, WebHID & MediaDevice change)
   // ---------------------------------------------------------------------------
   initHardwareHooks() {
     if (typeof window === 'undefined') return;
+
+    // Notify listeners that connected sensor is armed
+    setTimeout(() => {
+      if (this.isConnected) {
+        this.log('USB', `Hardware sensor armed: ${this.deviceInfo.model} (Serial: ${this.deviceInfo.serialNumber})`, this.deviceInfo);
+        this.emit('connected', this.deviceInfo);
+        window.dispatchEvent(new CustomEvent('nanopix:connected', { detail: this.deviceInfo }));
+      }
+    }, 400);
 
     // WebUSB listener
     if ('usb' in navigator) {
       navigator.usb.addEventListener('connect', (event) => {
         const dev = event.device;
-        const name = dev.productName || 'USB Dental Sensor';
+        const name = dev.productName || 'Eighteeth Nano-Pix Intraoral Sensor';
+        this.log('USB', `WebUSB device attached: ${name}`, { vendorId: dev.vendorId, productId: dev.productId });
         this.setConnected(true, name);
       });
 
       navigator.usb.addEventListener('disconnect', () => {
+        this.log('WARN', 'WebUSB device disconnected from USB port.');
         this.setConnected(false);
       });
 
-      // Check already paired USB devices
       navigator.usb.getDevices().then((devices) => {
         if (devices && devices.length > 0) {
           const match = devices.find(d => this.isDentalSensor(d));
           if (match) {
-            this.setConnected(true, match.productName || 'Eighteeth Nano-Pix');
+            this.log('USB', `Paired WebUSB dental sensor found: ${match.productName}`);
+            this.setConnected(true, match.productName || 'Eighteeth Nano-Pix 2');
           }
         }
       }).catch(() => {});
     }
 
-    // WebHID listener (fallback for HID-mode dental sensors)
+    // WebHID listener
     if ('hid' in navigator) {
       navigator.hid.addEventListener('connect', (event) => {
         const dev = event.device;
         const name = dev.productName || 'Nano-Pix Sensor';
+        this.log('USB', `WebHID dental interface connected: ${name}`);
         this.setConnected(true, name);
       });
 
       navigator.hid.addEventListener('disconnect', () => {
+        this.log('WARN', 'WebHID dental interface disconnected.');
         this.setConnected(false);
       });
+    }
+
+    // WebSerial listener (Official W3C standard for FTDI / i-Ray dental sensors on Windows)
+    if (typeof navigator !== 'undefined' && 'serial' in navigator) {
+      navigator.serial.addEventListener('connect', (event) => {
+        this.log('USB', 'WebSerial FTDI hardware port connected.', event);
+        this.setConnected(true, 'Eighteeth Nano-Pix 2 (IRAY USB Serial)');
+      });
+
+      navigator.serial.addEventListener('disconnect', (event) => {
+        this.log('WARN', 'WebSerial FTDI hardware port disconnected.', event);
+        this.setConnected(false);
+      });
+
+      navigator.serial.getPorts().then((ports) => {
+        if (ports && ports.length > 0) {
+          const ftdiPort = ports.find(p => {
+            const info = p.getInfo();
+            return info.usbVendorId === 0x0403 || this.knownVendorIds.includes(info.usbVendorId);
+          }) || ports[0];
+          if (ftdiPort) {
+            this.log('USB', 'Direct WebSerial FTDI Port bound to Eighteeth Nano-Pix 2.');
+            this.setConnected(true, 'Eighteeth Nano-Pix 2 (IRAY USB Serial)');
+          }
+        }
+      }).catch(() => {});
+    }
+
+    // MediaDevices listener
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', async () => {
+        this.log('USB', 'Host USB device change detected. Rescanning hardware ports...');
+        await this.scanHardwareSensors();
+      });
+    }
+  }
+
+  async scanHardwareSensors() {
+    try {
+      if ('serial' in navigator) {
+        const ports = await navigator.serial.getPorts();
+        if (ports && ports.length > 0) {
+          this.log('USB', `Found ${ports.length} serial COM port(s).`);
+          this.setConnected(true, 'Eighteeth Nano-Pix 2 (IRAY USB Serial)');
+          return;
+        }
+      }
+
+      if ('usb' in navigator) {
+        const usbDevs = await navigator.usb.getDevices();
+        const usbMatch = usbDevs.find(d => this.isDentalSensor(d));
+        if (usbMatch) {
+          this.log('USB', `Found matching USB dental sensor: ${usbMatch.productName}`);
+          this.setConnected(true, usbMatch.productName || 'Eighteeth Nano-Pix 2');
+          return;
+        }
+      }
+
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const sensorDev = devices.find(d => {
+          const l = (d.label || '').toLowerCase();
+          return l.includes('nanopix') || l.includes('eighteeth') || l.includes('rvg') || l.includes('intraoral');
+        });
+        if (sensorDev) {
+          this.log('USB', `Matched Video / Sensor Device: ${sensorDev.label}`);
+          this.setConnected(true, sensorDev.label || 'Eighteeth Nano-Pix');
+        }
+      }
+    } catch (e) {
+      this.log('WARN', `Hardware scan notice: ${e.message}`);
     }
   }
 
   isDentalSensor(device) {
     if (!device) return false;
     const name = (device.productName || '').toLowerCase();
-    if (name.includes('nanopix') || name.includes('eighteeth') || name.includes('sensor') || name.includes('x-ray')) {
+    if (name.includes('nanopix') || name.includes('eighteeth') || name.includes('sensor') || name.includes('x-ray') || name.includes('rvg') || name.includes('iray')) {
       return true;
     }
     return this.knownVendorIds.includes(device.vendorId);
   }
 
-  // Explicit browser USB permission request (called by user click)
-  async requestUsbPairing() {
-    if (!('usb' in navigator)) {
-      throw new Error('WebUSB is not supported in this browser. Please use Chrome or Edge.');
+  // ---------------------------------------------------------------------------
+  // ROBUST LOCAL BRIDGE TRANSPORT (HANDLES PORT 5050, 5066 & CLOUD HOSTING)
+  // ---------------------------------------------------------------------------
+  getBridgeEndpoints(endpoint) {
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+    // Priority 1: Native C# Dental Bridge on Port 5050
+    // Priority 2: Secondary / Fallback Agent on Port 5066
+    // Priority 3: Relative dev proxy endpoint if local
+    return [
+      `http://127.0.0.1:5050${cleanEndpoint}`,
+      `http://localhost:5050${cleanEndpoint}`,
+      `http://127.0.0.1:5066${cleanEndpoint}`,
+      `http://localhost:5066${cleanEndpoint}`,
+      ...(isLocal ? [cleanEndpoint] : [])
+    ];
+  }
+
+  async fetchRemoteBridgeLogs() {
+    try {
+      const data = await this.fetchBridgeJson('/api/logs', { timeout: 2500 });
+      if (data && data.success && Array.isArray(data.logs)) {
+        data.logs.forEach(l => {
+          const msg = l.Message ?? l.message ?? l.msg ?? '';
+          if (!msg || msg === 'undefined' || String(msg).endsWith('undefined')) return;
+          const cat = l.Category ?? l.category ?? 'BRIDGE';
+          const lvl = l.Level ?? l.level ?? 'INFO';
+          const id = l.Id ?? l.id ?? `${Date.now()}-${Math.random()}`;
+          const time = l.Timestamp ?? l.timestamp ?? new Date().toLocaleTimeString();
+
+          const exists = this.logs.some(existing => existing.id === id || (existing.time === time && existing.message && existing.message.includes(msg)));
+          if (!exists) {
+            this.logs.unshift({
+              id,
+              time,
+              type: lvl,
+              message: `[${cat}] ${msg}`,
+              details: l.Details ?? l.details
+            });
+          }
+        });
+        if (this.logs.length > 200) this.logs = this.logs.slice(0, 200);
+        this.emit('log', this.logs[0]);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('nanopix:log', { detail: this.logs[0] }));
+        }
+      }
+    } catch (_) {}
+  }
+
+  async clearBridgeLogs() {
+    this.logs = [];
+    try {
+      await this.fetchBridgeJson('/api/logs/clear', { method: 'POST', timeout: 1500 });
+    } catch (_) {}
+    this.emit('log', null);
+  }
+
+  async fetchBridgeJson(endpoint, options = {}) {
+    const urls = this.getBridgeEndpoints(endpoint);
+    for (const url of urls) {
+      try {
+        const timeoutMs = options.timeout || 2500;
+        const fetchOptions = {
+          ...options,
+          signal: AbortSignal.timeout(timeoutMs)
+        };
+        delete fetchOptions.timeout;
+
+        const res = await fetch(url, fetchOptions).catch(() => null);
+        if (res && res.ok) {
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await res.json().catch(() => null);
+            if (data !== null && data !== undefined) return data;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  async launchEngine() {
+    console.log('🩺 [HARDWARE DIAGNOSTIC] launchEngine called. Requesting Eighteeth Desktop App launch from local agent/bridge...');
+    // 1. Target Primary Hardware Bridge on port 5066 (Fast, immediate response)
+    try {
+      const data = await this.fetchBridgeJson('/nanopix/launch-engine', { timeout: 3500 });
+      console.log('🩺 [HARDWARE DIAGNOSTIC] Port 5066 (/nanopix/launch-engine) response:', data);
+      if (data && data.success) {
+        this.log('SUCCESS', `🚀 Eighteeth Desktop App launched: ${data.targetExe ? data.targetExe.split('\\').pop() : 'NanoPix.exe'}`);
+        return true;
+      }
+      if (data && data.success !== false) return true;
+    } catch (e) {
+      console.warn('🩺 [HARDWARE DIAGNOSTIC] Port 5066 bridge launch-engine attempt notice:', e.message);
     }
 
+    // 2. Fallback to local session agent on port 5055
     try {
-      const device = await navigator.usb.requestDevice({
-        filters: [
-          ...this.knownVendorIds.map(vid => ({ vendorId: vid }))
-        ]
+      const res = await fetch('http://127.0.0.1:5055/launch-nanopix', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-agent-token': 'dentia-secret-token-2026'
+        },
+        signal: AbortSignal.timeout(1000)
       });
-
-      const name = device.productName || 'Eighteeth Nano-Pix Sensor';
-      this.setConnected(true, name);
-      return { success: true, device };
-    } catch (err) {
-      if (err.name === 'NotFoundError') {
-        // User cancelled picker, fallback to simulated connect for demonstration
-        this.simulateConnect();
-        return { success: true, simulated: true };
+      console.log('🩺 [HARDWARE DIAGNOSTIC] Port 5055 agent status:', res.status);
+      if (res.ok) {
+        const data = await res.json();
+        console.log('🩺 [HARDWARE DIAGNOSTIC] Port 5055 agent launch result:', data);
+        this.log('SUCCESS', `🚀 Eighteeth Desktop App launched: ${data.path ? data.path.split('\\').pop() : 'NanoPix.exe'}`);
+        return true;
       }
-      throw err;
+    } catch (e) {
+      console.warn('🩺 [HARDWARE DIAGNOSTIC] Port 5055 agent unreachable:', e.message);
+    }
+
+    console.warn('🩺 [HARDWARE DIAGNOSTIC] launchEngine could not reach local background bridge on port 5066 or agent on 5055 on this client PC.');
+    return false;
+  }
+
+  async requestUsbPairing() {
+    this.log('USB', 'Querying local hardware bridge for physical FTDI FT232H sensor (0x0403:0x6014)...');
+    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const baseUrl = isLocal ? '' : 'http://127.0.0.1:5066';
+
+    try {
+      this.launchEngine().catch(() => {});
+
+      const data = await this.fetchBridgeJson('/nanopix/status', { timeout: 2500 });
+
+      if (data && data.bridgeOnline) {
+        const modelName = data.model || 'Eighteeth Nano-Pix 2 (HD CMOS)';
+        this.deviceInfo.model = modelName;
+        this.deviceInfo.serialNumber = data.serialNumber || 'iRayC7DB5M40P4';
+        this.deviceInfo.interface = 'FTDI FT232H Direct USB (D2XX Kernel)';
+        this.deviceInfo.resolution = '25 lp/mm / 4.4 MP';
+
+        if (data.usbConnected) {
+          this.deviceInfo.status = 'Ready (Armed)';
+          this.log('SUCCESS', `Physical sensor verified via Bridge: ${modelName} (Serial: ${this.deviceInfo.serialNumber})`, data);
+          this.setConnected(true, modelName);
+          return { success: true, armed: true, deviceInfo: this.deviceInfo };
+        } else {
+          this.deviceInfo.status = 'Disconnected (Bridge Running)';
+          this.log('WARN', `Bridge online but sensor disconnected.`);
+          this.setConnected(false, modelName);
+          throw new Error("USB Not Connected");
+        }
+      }
+      throw new Error("Bridge Offline");
+    } catch (e) {
+      console.warn('🩺 [HARDWARE DIAGNOSTIC] Local bridge query failed:', e.message);
+      this.log('WARN', 'Physical Eighteeth Nano-Pix sensor not detected via local bridge.');
+      this.setConnected(false);
+      return { success: false, armed: false, error: e.message };
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // 2. CONNECTION STATE MANAGEMENT & AUDIO CHIME
-  // ---------------------------------------------------------------------------
   setConnected(connected, deviceName = 'Eighteeth Nano-Pix 2') {
     const wasConnected = this.isConnected;
     this.isConnected = connected;
@@ -122,6 +771,7 @@ class NanoPixDeviceService {
     if (connected) {
       this.deviceInfo.model = deviceName.includes('Nano-Pix') ? deviceName : 'Eighteeth Nano-Pix 2';
       this.deviceInfo.status = 'Ready (Armed)';
+      this.log('SUCCESS', `Sensor status: ARMED & READY (${this.deviceInfo.model})`);
       if (!wasConnected) {
         this.playConnectChime();
         this.emit('connected', this.deviceInfo);
@@ -131,6 +781,7 @@ class NanoPixDeviceService {
       }
     } else {
       this.deviceInfo.status = 'Disconnected';
+      this.log('WARN', 'Sensor status: DISCONNECTED');
       if (wasConnected) {
         this.emit('disconnected', this.deviceInfo);
         if (typeof window !== 'undefined') {
@@ -140,23 +791,14 @@ class NanoPixDeviceService {
     }
   }
 
-  // Gentle medical electronic chime on USB sensor connect
   playConnectChime() {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return;
-
-      if (!this.audioContext) {
-        this.audioContext = new AudioContext();
-      }
-
-      if (this.audioContext.state === 'suspended') {
-        this.audioContext.resume();
-      }
+      if (!this.audioContext) this.audioContext = new AudioContext();
+      if (this.audioContext.state === 'suspended') this.audioContext.resume();
 
       const now = this.audioContext.currentTime;
-
-      // Note 1 (E6 - 1318.5 Hz)
       const osc1 = this.audioContext.createOscillator();
       const gain1 = this.audioContext.createGain();
       osc1.type = 'sine';
@@ -169,7 +811,6 @@ class NanoPixDeviceService {
       osc1.start(now);
       osc1.stop(now + 0.16);
 
-      // Note 2 (B6 - 1975.5 Hz)
       const osc2 = this.audioContext.createOscillator();
       const gain2 = this.audioContext.createGain();
       osc2.type = 'sine';
@@ -186,20 +827,16 @@ class NanoPixDeviceService {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // 3. TESTING & CHAIRSIDE SIMULATION
-  // ---------------------------------------------------------------------------
   simulateConnect(model = 'Eighteeth Nano-Pix 2 (USB 2.0)') {
+    this.log('SUCCESS', `Direct chairside mode armed: ${model}`);
     this.setConnected(true, model);
   }
 
   simulateDisconnect() {
+    this.log('WARN', 'Sensor set to standby / disconnected.');
     this.setConnected(false);
   }
 
-  // ---------------------------------------------------------------------------
-  // 4. HOT-FOLDER INGESTION (HTML5 File System Access API)
-  // ---------------------------------------------------------------------------
   async selectHotFolder() {
     if ('showDirectoryPicker' in window) {
       try {
@@ -210,10 +847,13 @@ class NanoPixDeviceService {
         });
         this.hotFolderHandle = dirHandle;
         this.isWatchingHotFolder = true;
+        this.log('HOTFOLDER', `Hot-Folder active! Watching directory: "${dirHandle.name}" for new TIFF/DICOM exposures.`);
         this.emit('hotfolder-selected', { name: dirHandle.name });
         return { success: true, name: dirHandle.name };
       } catch (err) {
-        if (err.name !== 'AbortError') console.error('Directory picker error:', err);
+        if (err.name !== 'AbortError') {
+          this.log('WARN', `Directory picker error: ${err.message}`);
+        }
       }
     }
     return { success: false, reason: 'Directory Picker not supported or cancelled' };

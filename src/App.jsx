@@ -101,16 +101,77 @@ const AdminRoute = ({ children }) => {
     return children;
 };
 
-// 📊 Google Analytics 4 (GA4) Page View Tracker for Single Page App Route Changes
+const AdminOrDoctorRoute = ({ children }) => {
+    const location = useLocation();
+    const sessionCheck = validateClinicianSession();
+    
+    if (!sessionCheck.isValid) {
+        let redirectParam = 'required=true';
+        let alertState = { authRequired: true };
+        
+        if (sessionCheck.reason === 'session_closed') {
+            redirectParam = 'session_closed=true';
+            alertState = { sessionClosed: true };
+        } else if (sessionCheck.reason === 'inactivity_timeout' || sessionCheck.reason === 'token_expired') {
+            redirectParam = 'expired=true';
+            alertState = { sessionExpired: true };
+        }
+        
+        return <Navigate to={`/login?${redirectParam}`} state={{ from: location, ...alertState }} replace />;
+    }
+    
+    return children;
+};
+
+// 📊 Google Analytics 4 (GA4) Page View Tracker & Dynamic Route Title Manager (NAV-003)
 const AnalyticsPageTracker = () => {
     const location = useLocation();
 
     useEffect(() => {
+        const path = location.pathname;
+        let title = 'Dentia Dental Clinic | Modern Care & 3D Diagnostics';
+        
+        if (path === '/' || path === '/dashboard') {
+            title = 'Dentia Dental Arts | Advanced Care & 3D Imaging';
+        } else if (path === '/appointments') {
+            title = 'Appointments Hub | Dentia Clinic';
+        } else if (path === '/book') {
+            title = 'Book an Appointment | Dentia Clinic';
+        } else if (path === '/directory') {
+            title = 'Patient Directory & Health Records | Dentia Clinic';
+        } else if (path === '/new-patient') {
+            title = 'Register New Patient | Dentia Clinic';
+        } else if (path.startsWith('/chart')) {
+            title = 'Odontogram Chart & Treatment Plan | Dentia Clinic';
+        } else if (path === '/treatment') {
+            title = 'Dental Treatments & Specialties | Dentia Clinic';
+        } else if (path === '/doctor/pricing' || path === '/treatment-pricing') {
+            title = 'Treatment Pricing & Fee Schedule | Dentia Clinic';
+        } else if (path === '/clinic/website-studio' || path === '/admin/website') {
+            title = 'Clinic Website Studio | Dentia Clinic';
+        } else if (path === '/login') {
+            title = 'Clinician & Patient Portal | Dentia Clinic';
+        } else if (path.startsWith('/admin/doctors')) {
+            title = 'Doctor Management | Dentia SuperAdmin';
+        } else if (path.startsWith('/admin/organizations')) {
+            title = 'Hospital & Organization Management | Dentia SuperAdmin';
+        } else if (path.startsWith('/admin/whatsapp')) {
+            title = 'WhatsApp Gateway & Communications | Dentia Clinic';
+        } else if (path === '/terms') {
+            title = 'Terms & Conditions | Dentia Clinic';
+        } else if (path === '/privacy') {
+            title = 'Privacy Policy | Dentia Clinic';
+        }
+        
+        if (typeof document !== 'undefined') {
+            document.title = title;
+        }
+
         if (typeof window !== 'undefined' && typeof window.gtag === 'function') {
             window.gtag('config', 'G-0N049FD35F', {
                 page_path: location.pathname + location.search,
                 page_location: window.location.href,
-                page_title: document.title
+                page_title: title
             });
         }
     }, [location]);
@@ -197,14 +258,14 @@ export default function App() {
                 </AdminRoute>
             } />
             <Route path="/admin/whatsapp" element={
-                <ProtectedRoute>
+                <AdminOrDoctorRoute>
                     <WhatsAppAdminPage />
-                </ProtectedRoute>
+                </AdminOrDoctorRoute>
             } />
             <Route path="/whatsapp-manager" element={
-                <ProtectedRoute>
+                <AdminOrDoctorRoute>
                     <WhatsAppAdminPage />
-                </ProtectedRoute>
+                </AdminOrDoctorRoute>
             } />
             
             {/* Public Pages */}

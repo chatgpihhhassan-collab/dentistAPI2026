@@ -20,15 +20,17 @@ import ClinicalActionChips from '../components/chat/ClinicalActionChips';
 import { parseDoctorConversationalIntent, normalizeClinicalSpeech, DENTAL_VOCABULARY } from '../utils/dentalNlpEngine';
 import { preloadJawImages, preloadPatientJawTemplates } from '../utils/jawImagePreloader';
 import { fetchWithCache, invalidateCache, setCachedData } from '../utils/apiCache';
+import apiFetch from '../utils/apiClient';
 import FullPageSkeletonLoader from '../components/FullPageSkeletonLoader';
 import nanoPixService from '../services/nanoPixDeviceService';
 import NanoPixCaptureModal from '../components/NanoPixCaptureModal';
-import NanoPixPatientPromptModal from '../components/NanoPixPatientPromptModal';
 import PatientTreatmentInvoiceTab from '../components/PatientTreatmentInvoiceTab';
 import ChartRadiographFilmstrip from '../components/ChartRadiographFilmstrip';
 import RadiographImpactInspectorModal from '../components/RadiographImpactInspectorModal';
 import ClinicalReportEditor from '../components/ClinicalReportEditor';
 import { extractAiFindingsFromReport, extractSoapFromReport, compressImageForUpload, isTestRadiograph, getHumanReadableReport, recombineReportWithStructuredData } from '../utils/aiRadiologyUtils';
+import AIBadgeAndActions from '../components/AIBadgeAndActions';
+import { AIFindingsConfirmModal } from '../components/ai';
 import { useDigoraHardwareSync } from '../hooks/useDigoraHardwareSync';
 import { API_BASE_URL } from '../config/apiConfig';
 import DigoraScannerModal from '../components/DigoraScannerModal';
@@ -709,9 +711,15 @@ export default function ChartPage() {
   const [liveOrthoAssessment, setLiveOrthoAssessment] = useState(null);
   const [specialtyRefreshTrigger, setSpecialtyRefreshTrigger] = useState(0);
   
+  // Gated Clinician Review Modal State for AI Findings
+  const [pendingAiFindingsModal, setPendingAiFindingsModal] = useState({
+    isOpen: false,
+    findings: [],
+    radiograph: null
+  });
+  
   // Eighteeth Nano-Pix Intraoral RVG Sensor Hardware Integration States
   const [showNanoPixModal, setShowNanoPixModal] = useState(false);
-  const [showNanoPixPromptModal, setShowNanoPixPromptModal] = useState(false);
   const [nanoPixStatus, setNanoPixStatus] = useState(() => nanoPixService.getStatus());
   const [nanoPixActiveTooth, setNanoPixActiveTooth] = useState('19');
   
@@ -973,8 +981,10 @@ export default function ChartPage() {
 
       if (typeof window !== 'undefined' && directImgUrl) {
         try {
-          localStorage.setItem(`dentia_radiograph_${radId}`, directImgUrl);
-          localStorage.setItem('dentia_latest_radiograph', directImgUrl);
+          sessionStorage.setItem(`dentia_radiograph_${radId}`, directImgUrl);
+          sessionStorage.setItem('dentia_latest_radiograph', directImgUrl);
+          localStorage.removeItem(`dentia_radiograph_${radId}`);
+          localStorage.removeItem('dentia_latest_radiograph');
         } catch (_) {}
       }
 
@@ -1045,6 +1055,113 @@ export default function ChartPage() {
       setTimeout(() => setToast({ visible: false, message: '' }), 5000);
     }
   });
+
+  // 🌟 Eighteeth Nano-Pix Intraoral RVG Zero-Click Hardware Auto-Sync (Direct USB & Hot-Folder Ingestion)
+  useEffect(() => {
+    if (!patientId) return;
+
+    const handleNanoPixIncomingScan = async (scan) => {
+      if (!scan) return;
+      const imageSrc = scan.previewBase64 || scan.dataUrl || scan.imageUrl;
+      if (!imageSrc) return;
+      scan.dataUrl = imageSrc;
+      scan.imageUrl = imageSrc;
+
+      const radId = scan.id || `NP_${Date.now()}`;
+      const tKey = scan.toothKey || (detailedTooth ? String(detailedTooth) : '19');
+      const imgName = scan.filename || `NanoPix_Tooth_${tKey}_${new Date().toLocaleTimeString().replace(/:/g, '-')}.png`;
+
+      console.log(
+        `%c[FRONTEND RECEIVE - ChartPage.jsx (handleNanoPixIncomingScan)] ✨ Mounting Real Radiograph onto Dental Chart & Odontogram!%c\n• Patient: #${patientId}\n• Tooth: #${tKey}\n• Filename: ${imgName}\n• Resolution: ${scan.resolution || (scan.width ? `${scan.width}x${scan.height}` : '1300x1800')}\n• Source: ${scan.source || 'DentalBridge Local'}\n• Image Length: ${imageSrc.length} chars\n• Odontogram Tooth #${tKey} spotlighted!`,
+        'background: #059669; color: white; font-weight: 900; font-size: 12px; padding: 4px 8px; border-radius: 4px;',
+        'color: #047857; font-weight: bold;'
+      );
+
+      const newScan = {
+        radiographID: radId,
+        RadiographID: radId,
+        patientID: Number(patientId),
+        PatientID: Number(patientId),
+        imageName: imgName,
+        ImageName: imgName,
+        mimeType: scan.mimeType || 'image/png',
+        uploadedAt: scan.timestamp || new Date().toISOString(),
+        analysisSummary: scan.analysisSummary || '',
+        AnalysisSummary: scan.analysisSummary || '',
+        source: scan.source || 'Eighteeth Nano-Pix 2 (HD CMOS)',
+        imageUrl: scan.dataUrl,
+        dataUrl: scan.dataUrl,
+        imageData: scan.dataUrl.startsWith('data:') ? scan.dataUrl.split(',')[1] : null
+      };
+
+      setRadiographs(prev => {
+        const filtered = prev.filter(r => (r.radiographID || r.RadiographID) !== radId);
+        return [newScan, ...filtered];
+      });
+
+      setSelectedRadiograph(newScan);
+      setRadiographBlobUrl(scan.dataUrl);
+      setRadiographImgLoading(false);
+      setRadiographImgError(false);
+
+      if (tKey) {
+        const tNum = parseInt(tKey, 10);
+        if (!isNaN(tNum) && tNum >= 1 && tNum <= 32) {
+          setDetailedTooth(tNum);
+          setHighlightedTeeth([tNum]);
+        }
+      }
+
+      setToast({
+        visible: true,
+        message: `✨ [STEP 4/4] Eighteeth Nano-Pix X-Ray auto-mounted on Chart for Tooth #${tKey} (Patient #${patientId})!`
+      });
+      setTimeout(() => setToast({ visible: false, message: '' }), 5000);
+
+      // Asynchronously upload and run Gemini AI diagnostics if server is reachable
+      try {
+        const res = await fetch(scan.dataUrl);
+        const blob = await res.blob();
+        const file = new File([blob], imgName, { type: blob.type || 'image/png' });
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const doctorData = JSON.parse(localStorage.getItem('doctor') || '{}');
+        const doctorId = doctorData.doctorID || doctorData.DoctorID || 1;
+
+        const uploadRes = await fetch(`/api/patients/${patientId}/radiographs?doctorId=${doctorId}`, {
+          method: 'POST',
+          body: formData
+        });
+
+        if (uploadRes.ok) {
+          const savedRecord = await uploadRes.json();
+          if (savedRecord) {
+            setRadiographs(prev => {
+              const filtered = prev.filter(r => (r.radiographID || r.RadiographID) !== radId && (r.radiographID || r.RadiographID) !== savedRecord.radiographID);
+              return [savedRecord, ...filtered];
+            });
+            setSelectedRadiograph(savedRecord);
+            const findings = extractAiFindingsFromReport(savedRecord.analysisSummary || savedRecord.AnalysisSummary);
+            if (findings && findings.length > 0 && handleApplyAiFindingsRef.current) {
+              handleApplyAiFindingsRef.current(findings, savedRecord);
+            }
+          }
+        }
+      } catch (err) {
+        console.debug('Background AI upload notice:', err);
+      }
+    };
+
+    const unsub = nanoPixService.subscribe('scan-acquired', handleNanoPixIncomingScan);
+    const onCustomEvent = (e) => handleNanoPixIncomingScan(e.detail);
+    window.addEventListener('nanopix:scan-acquired', onCustomEvent);
+
+    return () => {
+      if (typeof unsub === 'function') unsub();
+      window.removeEventListener('nanopix:scan-acquired', onCustomEvent);
+    };
+  }, [patientId, detailedTooth]);
 
   // Operatory Workspace View Mode & 3D Arch Density States
   const [workspaceMode, setWorkspaceMode] = useState('split'); // 'split' | 'radiology' | 'chart'
@@ -1126,18 +1243,21 @@ export default function ChartPage() {
       }
 
       setIsRefreshingEngine(true);
-      const res = await fetch('/api/ai-dental-notes/engine-status');
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.activeEngine) {
-          setEngineDiagnostics(data);
-          try {
-            sessionStorage.setItem('dentia_engine_diagnostics', JSON.stringify({ timestamp: Date.now(), data }));
-          } catch (e) {}
+      const res = await fetch('/api/ai-dental-notes/engine-status').catch(() => null);
+      if (res && res.ok) {
+        const cType = res.headers.get('content-type') || '';
+        if (cType.includes('application/json')) {
+          const data = await res.json().catch(() => null);
+          if (data && data.activeEngine) {
+            setEngineDiagnostics(data);
+            try {
+              sessionStorage.setItem('dentia_engine_diagnostics', JSON.stringify({ timestamp: Date.now(), data }));
+            } catch (e) {}
+          }
         }
       }
-    } catch (err) {
-      console.warn('Failed to fetch engine diagnostics:', err);
+    } catch (_) {
+      // Non-critical fallback
     } finally {
       setIsRefreshingEngine(false);
     }
@@ -1179,7 +1299,8 @@ export default function ChartPage() {
               console.log(`📋 [Diagnostic Suite Restored from DB Table for Patient #${patientId}]:`, preloadedAssessment);
               setLiveOrthoAssessment(preloadedAssessment);
               try {
-                localStorage.setItem(`dentia_diagnostic_assessment_${patientId}`, JSON.stringify(preloadedAssessment));
+                sessionStorage.setItem(`dentia_diagnostic_assessment_${patientId}`, JSON.stringify(preloadedAssessment));
+                localStorage.removeItem(`dentia_diagnostic_assessment_${patientId}`);
               } catch (e) {}
             } else {
               let detectedAssessment = null;
@@ -1348,7 +1469,8 @@ export default function ChartPage() {
                 console.log(`📐 [Diagnostic Suite Restored from DB Teeth Chart for Patient #${patientId}]:`, detectedAssessment);
                 setLiveOrthoAssessment(detectedAssessment);
                 try {
-                  localStorage.setItem(`dentia_diagnostic_assessment_${patientId}`, JSON.stringify(detectedAssessment));
+                  sessionStorage.setItem(`dentia_diagnostic_assessment_${patientId}`, JSON.stringify(detectedAssessment));
+                  localStorage.removeItem(`dentia_diagnostic_assessment_${patientId}`);
                 } catch (e) {}
               }
             }
@@ -1568,7 +1690,8 @@ export default function ChartPage() {
       };
       mergedAssessment = merged;
       try {
-        localStorage.setItem(`dentia_diagnostic_assessment_${pid}`, JSON.stringify(merged));
+        sessionStorage.setItem(`dentia_diagnostic_assessment_${pid}`, JSON.stringify(merged));
+        localStorage.removeItem(`dentia_diagnostic_assessment_${pid}`);
       } catch (e) {}
       return merged;
     });
@@ -1900,6 +2023,7 @@ export default function ChartPage() {
     try {
       const searchParams = new URLSearchParams(window.location.search);
       if (searchParams.get('nanopix') === 'open') {
+        console.log('🩺 [HARDWARE DIAGNOSTIC] ChartPage URL has ?nanopix=open. Auto-opening NanoPix modal for patient:', patientId);
         setShowNanoPixModal(true);
       }
     } catch (e) {}
@@ -1907,13 +2031,27 @@ export default function ChartPage() {
     // 2. Hardware connection listener
     const connectHandler = (device) => {
       setNanoPixStatus({ isConnected: true, deviceInfo: device });
-      console.log('⚡ [ChartPage] Eighteeth Nano-Pix Intraoral Sensor connected for patient:', patientId);
+      console.log('🩺 [HARDWARE DIAGNOSTIC] Eighteeth Nano-Pix Intraoral Sensor connected for patient:', patientId, device);
+      setShowNanoPixModal(true);
     };
 
     const disconnectHandler = () => {
       setNanoPixStatus({ isConnected: false, deviceInfo: null });
-      console.log('🔌 [ChartPage] Eighteeth Nano-Pix Intraoral Sensor disconnected');
+      console.log('🩺 [HARDWARE DIAGNOSTIC] Eighteeth Nano-Pix Intraoral Sensor disconnected');
     };
+
+    const windowConnectHandler = (e) => {
+      console.log('🩺 [HARDWARE DIAGNOSTIC] window nanopix:connected event received:', e.detail);
+      setNanoPixStatus({ isConnected: true, deviceInfo: e.detail });
+      setShowNanoPixModal(true);
+    };
+    window.addEventListener('nanopix:connected', windowConnectHandler);
+
+    const handleOpenModal = () => {
+      console.log('🩺 [HARDWARE DIAGNOSTIC] window nanopix:open-modal event received. Opening NanoPix modal for patient:', patientId);
+      setShowNanoPixModal(true);
+    };
+    window.addEventListener('nanopix:open-modal', handleOpenModal);
 
     const unsubConnect = typeof nanoPixService?.subscribe === 'function'
       ? nanoPixService.subscribe('connected', connectHandler)
@@ -1928,6 +2066,8 @@ export default function ChartPage() {
       : () => {};
 
     return () => {
+      window.removeEventListener('nanopix:connected', windowConnectHandler);
+      window.removeEventListener('nanopix:open-modal', handleOpenModal);
       if (typeof unsubConnect === 'function') unsubConnect();
       if (typeof unsubDisconnect === 'function') unsubDisconnect();
     };
@@ -2653,12 +2793,16 @@ export default function ChartPage() {
         const detectedFindings = extractAiFindingsFromReport(newRecord.analysisSummary || newRecord.AnalysisSummary);
 
         if (detectedFindings && detectedFindings.length > 0) {
-          // Step 5: Auto-apply to dental chart
-          console.log(`[STEP 5/5: CHART AUTO-APPLY] Applying ${detectedFindings.length} findings to Dental Chart:`, detectedFindings.map(f => `#${f.toothKey || f.toothNumber} (${f.condition})`));
-          await handleApplyAiFindingsToChart(detectedFindings, newRecord);
+          // Step 5: Gated clinician review before charting (Safety Mandate)
+          console.log(`[STEP 5/5: CLINICAL REVIEW GATE] Opening confirmation modal for ${detectedFindings.length} findings:`, detectedFindings.map(f => `#${f.toothKey || f.toothNumber} (${f.condition})`));
+          setPendingAiFindingsModal({
+            isOpen: true,
+            findings: detectedFindings,
+            radiograph: newRecord
+          });
           setToast({ 
             visible: true, 
-            message: `✨ AI detected & applied ${detectedFindings.length} findings (Teeth: ${detectedFindings.map(f => '#' + (f.toothKey || f.toothNumber)).join(', ')}) directly to Dental Chart!` 
+            message: `✨ AI detected ${detectedFindings.length} findings. Please review and confirm before charting.` 
           });
         } else {
           console.log('[STEP 5/5: CHART AUTO-APPLY] No actionable tooth pathology detected in report.');
@@ -2676,6 +2820,46 @@ export default function ChartPage() {
       if (e.target) e.target.value = '';
     }
   };
+
+  // ---------------------------------------------------------------------------
+  // GLOBAL NANO-PIX RVG SENSOR SCAN AUTO-INGESTION (ZERO-TOUCH)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const handleGlobalNanoPixScan = async (scan) => {
+      if (!scan) return;
+      const imageSrc = scan.previewBase64 || scan.dataUrl || scan.imageUrl;
+      if (!imageSrc) return;
+      scan.dataUrl = imageSrc;
+      scan.imageUrl = imageSrc;
+
+      console.log(
+        '%c[FRONTEND RECEIVE - ChartPage.jsx (handleGlobalNanoPixScan)] ⚡ Zero-Touch Ingestion into Patient Radiographs!',
+        'background: #059669; color: white; font-weight: bold; font-size: 12px; padding: 3px 6px; border-radius: 4px;',
+        {
+          patientId,
+          toothKey: scan.toothKey,
+          filename: scan.filename,
+          resolution: scan.resolution,
+          length: imageSrc.length
+        }
+      );
+      try {
+        const res = await fetch(imageSrc);
+        const blob = await res.blob();
+        const mime = blob.type || (scan.filename?.endsWith('.png') ? 'image/png' : 'image/jpeg');
+        const file = new File([blob], scan.filename || `NanoPix_Patient_${patientId}_${Date.now()}.png`, { type: mime });
+        await handleUploadXray({ target: { files: [file] } });
+      } catch (err) {
+        console.error('Failed to auto-ingest hardware scan into chart:', err);
+      }
+    };
+
+    const onCustomScan = (e) => handleGlobalNanoPixScan(e.detail);
+    window.addEventListener('nanopix:scan-acquired', onCustomScan);
+    return () => {
+      window.removeEventListener('nanopix:scan-acquired', onCustomScan);
+    };
+  }, [patientId]);
 
   useEffect(() => {
     if (selectedRadiograph) {
@@ -2837,9 +3021,13 @@ export default function ChartPage() {
         const detectedFindings = extractAiFindingsFromReport(data.analysisSummary);
         console.log(`%c[AI RE-ANALYZE FINDINGS] Detected ${detectedFindings.length} teeth pathologies:`, 'color: #3B82F6; font-weight: bold;', detectedFindings.map(f => `#${f.toothKey || f.toothNumber} (${f.condition}, CDT: ${f.cdtCode || 'N/A'})`));
         if (detectedFindings && detectedFindings.length > 0) {
-          console.log(`%c[AI RE-ANALYZE AUTO-APPLY] Automatically syncing ${detectedFindings.length} findings to Dental Chart...`, 'color: #8B5CF6; font-weight: bold;');
-          await handleApplyAiFindingsToChart(detectedFindings, updatedRad);
-          setToast({ visible: true, message: `✨ Live AI Analysis complete & synced ${detectedFindings.length} findings to Dental Chart!` });
+          console.log(`%c[AI RE-ANALYZE CLINICAL GATE] Prompting doctor confirmation for ${detectedFindings.length} findings...`, 'color: #8B5CF6; font-weight: bold;');
+          setPendingAiFindingsModal({
+            isOpen: true,
+            findings: detectedFindings,
+            radiograph: updatedRad
+          });
+          setToast({ visible: true, message: `✨ Live AI analysis identified ${detectedFindings.length} findings. Review before charting.` });
         } else {
           console.warn('[AI RE-ANALYZE] No tooth pathologies identified in this radiograph projection.');
           setToast({ visible: true, message: "✨ Live AI Radiograph Analysis complete!" });
@@ -2847,11 +3035,11 @@ export default function ChartPage() {
       } else {
         const errTxt = await res.text().catch(() => '');
         console.error(`[AI RE-ANALYZE ERROR] Server returned HTTP ${res.status}:`, errTxt);
-        alert(`Live AI Vision analysis failed (HTTP ${res.status}): ${errTxt}`);
+        setToast({ visible: true, message: `Live AI Vision analysis failed (HTTP ${res.status}): ${errTxt || 'Service temporarily unavailable'}` });
       }
     } catch (err) {
       console.error("[AI RE-ANALYZE EXCEPTION] Network or runtime error during re-analysis:", err);
-      alert("Error analyzing radiograph: " + err.message);
+      setToast({ visible: true, message: "Error analyzing radiograph: " + (err.message || 'Network error') });
     } finally {
       setIsReanalyzingXray(false);
       setTimeout(() => setToast({ visible: false, message: "" }), 3500);
@@ -2975,7 +3163,7 @@ export default function ChartPage() {
   const handlePrintXray = async () => {
     if (!selectedRadiograph) return;
     const rId = selectedRadiograph.radiographID || selectedRadiograph.RadiographID;
-    const imgUrl = radiographBlobUrl || `https://dentist-api-dev.vitonta.com/api/radiographs/${rId}/image`;
+    const imgUrl = radiographBlobUrl || `${(API_BASE_URL || 'https://dentist-api-dev.vitonta.com').replace(/\/$/, '')}/api/radiographs/${rId}/image`;
     const base64Img = await getBase64FromImageUrl(imgUrl);
     const pName = `${patient?.firstName || ''} ${patient?.lastName || ''}`.trim() || 'Patient';
     const pRefNo = patient?.referenceNumber || patient?.referenceNo || (patient?.patientID || patient?.id ? `DEN-2026-${String(patient.patientID || patient.id).padStart(5, '0')}` : 'DEN-2026-PATIENT');
@@ -3137,7 +3325,7 @@ export default function ChartPage() {
   const handleDownloadXrayPDF = async () => {
     if (!selectedRadiograph) return;
     const rId = selectedRadiograph.radiographID || selectedRadiograph.RadiographID;
-    const imgUrl = radiographBlobUrl || `https://dentist-api-dev.vitonta.com/api/radiographs/${rId}/image`;
+    const imgUrl = radiographBlobUrl || `${(API_BASE_URL || 'https://dentist-api-dev.vitonta.com').replace(/\/$/, '')}/api/radiographs/${rId}/image`;
     const base64Img = await getBase64FromImageUrl(imgUrl);
     const pName = `${patient?.firstName || ''} ${patient?.lastName || ''}`.trim() || 'Patient';
     const docName = `Dr. ${doctor?.firstName || doctor?.name || 'Ahmed'}`;
@@ -3952,7 +4140,7 @@ export default function ChartPage() {
 
     const doctorData = JSON.parse(localStorage.getItem('doctor') || '{}');
     const doctorId = doctorData.doctorID || doctorData.DoctorID || patient?.doctorID || patient?.DoctorID || 1;
-    const targetUrl = 'https://dentist-api-dev.vitonta.com/api/ai-dental-notes/recordings';
+    const targetUrl = `${(API_BASE_URL || 'https://dentist-api-dev.vitonta.com').replace(/\/$/, '')}/api/ai-dental-notes/recordings`;
 
     const makeFormData = (includeBlob = true) => {
       const fd = new FormData();
@@ -4197,8 +4385,8 @@ export default function ChartPage() {
         };
       });
 
-      const pid = parseInt(patientId) || (patient?.patientID ? parseInt(patient.patientID) : 5);
-      const res = await fetch('/api/patients/teeth/update-bulk', {
+      const pid = parseInt(patientId) || (patient?.patientID ? parseInt(patient.patientID) : 1);
+      const res = await apiFetch('/api/patients/teeth/update-bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4211,8 +4399,8 @@ export default function ChartPage() {
         invalidateCache(`patient_${pid}_chart`);
         // Post save log
         const doctorData = JSON.parse(localStorage.getItem('doctor') || '{}');
-        const docId = doctorData.doctorID || doctorData.DoctorID || 2;
-        await fetch(`/api/patients/${patientId}/clinical-logs`, {
+        const docId = doctorData.doctorID || doctorData.DoctorID || 1;
+        await apiFetch(`/api/patients/${pid}/clinical-logs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4224,11 +4412,12 @@ export default function ChartPage() {
         setToast({ visible: true, message: "Patient Chart and Odontogram saved successfully!" });
         setTimeout(() => setToast({ visible: false, message: '' }), 3000);
       } else {
-        alert("Error saving patient chart details.");
+        const errData = await res.json().catch(() => ({}));
+        alert(`Error saving patient chart details: ${errData.message || res.statusText || 'Server error'}`);
       }
     } catch (err) {
       console.error(err);
-      alert("Error saving patient chart details.");
+      alert(`Error saving patient chart details: ${err.message || 'Network connection failure'}`);
     }
   };
 
@@ -4316,6 +4505,38 @@ export default function ChartPage() {
       console.error("Error updating tooth status in database:", err);
     }
   };
+
+  // 🎙️ Jarvis Voice Copilot Operatory Event Listeners
+  useEffect(() => {
+    const handleVoiceChartUpdate = (e) => {
+      if (!e.detail) return;
+      const { toothNumber, condition, comment, surfaces } = e.detail;
+      console.log('🎙️ [Jarvis Voice Event] Live updating chart for tooth:', toothNumber, condition);
+      if (toothNumber) {
+        executeCommand(toothNumber, condition || 'Decay', comment || `Voice dictation (${(surfaces || []).join('')})`);
+      }
+    };
+
+    const handleVoiceDigora = () => {
+      console.log('🎙️ [Jarvis Voice Event] Arming Digora Optime scanner modal');
+      setShowDigoraModal(true);
+    };
+
+    const handleVoiceNanoPix = () => {
+      console.log('🎙️ [Jarvis Voice Event] Arming NanoPix RVG sensor modal');
+      setShowNanoPixModal(true);
+    };
+
+    window.addEventListener('dentia:voice:chart-update', handleVoiceChartUpdate);
+    window.addEventListener('dentia:voice:open-digora', handleVoiceDigora);
+    window.addEventListener('dentia:voice:open-nanopix', handleVoiceNanoPix);
+
+    return () => {
+      window.removeEventListener('dentia:voice:chart-update', handleVoiceChartUpdate);
+      window.removeEventListener('dentia:voice:open-digora', handleVoiceDigora);
+      window.removeEventListener('dentia:voice:open-nanopix', handleVoiceNanoPix);
+    };
+  }, [teethState, patientId, dentitionMode]);
 
   // --- REAL APIs for AI Assistant ---
   const registerPatientAPI = async (data) => {
@@ -7522,9 +7743,20 @@ export default function ChartPage() {
                   <button
                     type="button"
                     onClick={() => {
+                      const doctorData = JSON.parse(localStorage.getItem('doctor') || '{}');
+                      console.log('🩺 [HARDWARE DIAGNOSTIC] Doctor clicked [📸 Nano-Pix RVG] button in ChartPage:', {
+                        doctorId: doctorData.doctorID || doctorData.DoctorID || 2,
+                        doctorName: `${doctorData.firstName || ''} ${doctorData.lastName || ''}`.trim() || 'Doctor 2',
+                        patientId,
+                        targetTooth: detailedTooth || '19',
+                        nanoPixStatus: nanoPixStatus?.isConnected ? 'ONLINE' : 'STANDBY/USB',
+                        deviceInfo: nanoPixStatus?.deviceInfo,
+                        timestamp: new Date().toISOString()
+                      });
                       if (detailedTooth) {
                         setNanoPixActiveTooth(String(detailedTooth));
                       }
+                      nanoPixService.launchEngine().catch(() => {});
                       setShowNanoPixModal(true);
                     }}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black shadow-2xs transition-all cursor-pointer border ${
@@ -8186,6 +8418,7 @@ export default function ChartPage() {
                   <div 
                     onClick={() => {
                       if (detailedTooth) setNanoPixActiveTooth(String(detailedTooth));
+                      nanoPixService.launchEngine().catch(() => {});
                       setShowNanoPixModal(true);
                     }}
                     className="border-2 border-dashed border-teal-400/60 rounded-[2rem] p-7 bg-teal-50/20 hover:bg-teal-50/50 transition-all duration-300 flex flex-col items-center justify-center text-center cursor-pointer group shadow-2xs"
@@ -8696,6 +8929,7 @@ export default function ChartPage() {
                                     isApplying={isApplyingAiFindings}
                                     onReanalyze={handleReanalyzeXray}
                                     isReanalyzing={isReanalyzingXray}
+                                    onEdit={() => setIsEditingXrayAnalysis(true)}
                                   />
 
                                   {/* Save to History Button */}
@@ -8906,6 +9140,21 @@ export default function ChartPage() {
                         >
                           <ToothDetailAllIcon className="w-3.5 h-3.5 text-[#4A7CD2] group-hover:scale-110 transition-transform" />
                           <span>Tooth Detail</span>
+                        </button>
+
+                        {/* ✨ Denty AI Diagnostic & Radiology Studio (User Request) */}
+                        <button
+                          type="button"
+                          id="btn-denty-ai-studio"
+                          onClick={() => navigate(`/chart/${patient?.patientID || patientId}/ai-studio`)}
+                          className="text-[10.5px] font-black bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 text-white px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1.5 transition-all cursor-pointer group shrink-0 ring-2 ring-blue-400/30 hover:scale-105"
+                          title="Open Denty AI Diagnostic Studio (AI Analyzed 3D Radiograph & Treatment)"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                          <span>Denty AI Studio</span>
+                          <span className="text-[8.5px] bg-white/25 text-white font-extrabold px-1.5 py-0.2 rounded-full uppercase tracking-wider">
+                            AI
+                          </span>
                         </button>
 
                         <button
@@ -9223,7 +9472,7 @@ export default function ChartPage() {
                                     isPediatric={dentitionMode === 'pediatric'}
                                     teethState={teethState}
                                     highlightedTeeth={highlightedTeeth}
-                                    className={jawDensity === 'compact' ? "w-full max-w-[280px] xl:max-w-[310px] h-[180px] xl:h-[200px] aspect-square" : "w-full max-w-[340px] xl:max-w-[370px] h-[270px] xl:h-[295px] aspect-square"}
+                                    className={jawDensity === 'compact' ? "w-full max-w-[280px] xl:max-w-[310px] max-h-[190px] xl:max-h-[210px] aspect-square" : "w-full max-w-[340px] xl:max-w-[370px] max-h-[270px] xl:max-h-[295px] aspect-square"}
                                     onToothClick={(toothNum, status, socket) => {
                                       setDetailedTooth(toothNum);
                                       setHighlightedTeeth([toothNum]);
@@ -9267,7 +9516,7 @@ export default function ChartPage() {
                                     isPediatric={dentitionMode === 'pediatric'}
                                     teethState={teethState}
                                     highlightedTeeth={highlightedTeeth}
-                                    className={jawDensity === 'compact' ? "w-full max-w-[280px] xl:max-w-[310px] h-[180px] xl:h-[200px] aspect-square" : "w-full max-w-[340px] xl:max-w-[370px] h-[270px] xl:h-[295px] aspect-square"}
+                                    className={jawDensity === 'compact' ? "w-full max-w-[280px] xl:max-w-[310px] max-h-[190px] xl:max-h-[210px] aspect-square" : "w-full max-w-[340px] xl:max-w-[370px] max-h-[270px] xl:max-h-[295px] aspect-square"}
                                     onToothClick={(toothNum, status, socket) => {
                                       setDetailedTooth(toothNum);
                                       setHighlightedTeeth([toothNum]);
@@ -9312,7 +9561,7 @@ export default function ChartPage() {
                                     isPediatric={dentitionMode === 'pediatric'}
                                     teethState={teethState}
                                     highlightedTeeth={highlightedTeeth}
-                                    className={jawDensity === 'compact' ? "w-full max-w-[320px] h-[210px] aspect-square" : "w-full max-w-[380px] h-[290px] aspect-square"}
+                                    className={jawDensity === 'compact' ? "w-full max-w-[320px] max-h-[220px] aspect-square" : "w-full max-w-[380px] max-h-[290px] aspect-square"}
                                     onToothClick={(toothNum, status, socket) => {
                                       setDetailedTooth(toothNum);
                                       setHighlightedTeeth([toothNum]);
@@ -11888,6 +12137,16 @@ export default function ChartPage() {
                             />
                           )}
 
+                          {!isDoc && m.type !== 'welcome_card' && (
+                            <AIBadgeAndActions
+                              promptId="clinical-copilot-qa"
+                              version="1.0.0"
+                              feature="copilot"
+                              textToCopy={m.text}
+                              className="mt-2"
+                            />
+                          )}
+
                           <span className={`text-[8.5px] block mt-1 text-right ${isDoc ? 'text-slate-300' : 'text-slate-500'}`}>{m.time}</span>
                         </div>
                       </div>
@@ -12359,19 +12618,6 @@ export default function ChartPage() {
         }}
       />
 
-      {/* Global Nano-Pix Patient Association Modal (when device connected outside chart) */}
-      <NanoPixPatientPromptModal
-        isOpen={showNanoPixPromptModal}
-        onClose={() => setShowNanoPixPromptModal(false)}
-        onSelectPatient={(p) => {
-          setShowNanoPixPromptModal(false);
-          const pid = p.patientID || p.id;
-          if (pid) {
-            navigate(`/chart/${pid}?nanopix=open`);
-          }
-        }}
-      />
-
       {/* Picture-in-Picture Radiograph Diagnostic Inspector Modal */}
       <RadiographImpactInspectorModal
         isOpen={isInspectorOpen}
@@ -12398,6 +12644,24 @@ export default function ChartPage() {
         patientName={patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : `Patient #${patientId}`}
         operatoryId="Op-1"
         digoraSync={digoraSync}
+      />
+
+      {/* 🛡️ Clinician Review & Gating Modal for AI Findings (Principle #4: Trust & Control) */}
+      <AIFindingsConfirmModal
+        isOpen={pendingAiFindingsModal.isOpen}
+        findings={pendingAiFindingsModal.findings}
+        radiograph={pendingAiFindingsModal.radiograph}
+        onClose={() => setPendingAiFindingsModal({ isOpen: false, findings: [], radiograph: null })}
+        onConfirm={async (approvedFindings) => {
+          if (approvedFindings && approvedFindings.length > 0) {
+            await handleApplyAiFindingsToChart(approvedFindings, pendingAiFindingsModal.radiograph);
+            setToast({
+              visible: true,
+              message: `✅ Clinician confirmed & charted ${approvedFindings.length} AI findings!`
+            });
+            setTimeout(() => setToast({ visible: false, message: "" }), 4000);
+          }
+        }}
       />
 
       <Footer />

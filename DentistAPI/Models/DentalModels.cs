@@ -179,6 +179,8 @@ namespace DentistAPI.Models
         public string? Status { get; set; }
         public string? Reason { get; set; }
         public string? Notes { get; set; }
+        public DateTime? PreferredDate { get; set; }
+        public int? DoctorID { get; set; }
     }
 
     public class ClinicalLog

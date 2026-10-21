@@ -127,6 +127,14 @@ namespace DentistAPI.Controllers
                 patient.ProfileImageMimeType = mime;
             }
 
+            // PAT-001: Clean & Normalize patient names to Title Case, strip tags/symbols
+            patient.FirstName = CleanAndFormatName(patient.FirstName);
+            patient.LastName = CleanAndFormatName(patient.LastName);
+            if (patient.FirstName.Length < 2)
+            {
+                return BadRequest("Patient first name must be at least 2 valid alphabetical characters.");
+            }
+
             // Duplicate Verification: Same Doctor + Same First/Last Name + (Same DOB OR Same Phone)
             var existingDuplicate = await _repository.FindDuplicatePatientAsync(patient.DoctorID, patient.FirstName, patient.LastName, patient.DOB, patient.Phone);
             if (existingDuplicate != null)
@@ -142,9 +150,14 @@ namespace DentistAPI.Controllers
                 });
             }
 
-            if (string.IsNullOrEmpty(patient.Email))
+            // REG-004: Do not invent fake email addresses
+            if (string.IsNullOrWhiteSpace(patient.Email))
             {
-                patient.Email = $"{patient.FirstName.ToLower().Replace(" ", "")}.{patient.LastName.ToLower().Replace(" ", "")}@dentiaclinic.com";
+                patient.Email = null;
+            }
+            else
+            {
+                patient.Email = patient.Email.Trim().ToLowerInvariant();
             }
 
             if (patient.Address == null)
@@ -220,12 +233,10 @@ namespace DentistAPI.Controllers
                 response = localFastResponse ?? new AIIntakeResponse { Region = request.Region ?? "PK" };
             }
 
-            // Auto-generate professional email if not supplied
-            if (string.IsNullOrEmpty(response.Email) && !string.IsNullOrEmpty(response.FirstName))
+            // Preserve real email if supplied, do not fabricate fake clinic emails (REG-004)
+            if (!string.IsNullOrEmpty(response.Email))
             {
-                var cleanFirst = response.FirstName.ToLower().Trim();
-                var cleanLast = (response.LastName ?? "").ToLower().Trim();
-                response.Email = $"{cleanFirst}{(string.IsNullOrEmpty(cleanLast) ? "" : "." + cleanLast)}@dentiaclinic.com";
+                response.Email = response.Email.Trim().ToLowerInvariant();
             }
 
             // Duplicate Verification on extracted patient
@@ -452,31 +463,34 @@ Rules:
                 res.ExtractedFields.Add("gender");
             }
 
-            // 3. Age / DOB extraction (Supports '25 year male', '25 years', '25', '25yo', '25 saal', 'age 25', etc.)
-            var ageMatch = Regex.Match(text, @"\b(?:age|umar|umer|years?(\s*old)?|yo|y/o|yrs?|yr|saal|sal)\s*[:\-\s]?\s*(\d{1,2})\b|\b(\d{1,2})\s*(?:years?(\s*old)?|yo|y/o|yrs?|yr|saal|sal)\b", RegexOptions.IgnoreCase);
-            if (!ageMatch.Success)
+            // 3. Age / DOB extraction (Supports '25 year male', '25 years old', '36 years old', '36yo', 'he is 36', etc.)
+            var dobMatch = Regex.Match(text, @"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})\b");
+            if (dobMatch.Success && DateTime.TryParse(dobMatch.Value, out DateTime parsedDob))
             {
-                // Match standalone number or number next to gender (e.g. "25", "25 male", "25 female", "male 25")
-                ageMatch = Regex.Match(text, @"\b(\d{1,2})\b");
-            }
-
-            if (ageMatch.Success)
-            {
-                var ageStr = !string.IsNullOrEmpty(ageMatch.Groups[1].Value) ? ageMatch.Groups[1].Value : ageMatch.Groups[2].Value;
-                if (int.TryParse(ageStr, out int age) && age > 0 && age <= 120)
-                {
-                    int birthYear = DateTime.Now.Year - age;
-                    res.Dob = $"{birthYear}-01-01";
-                    res.ExtractedFields.Add("dob");
-                }
+                res.Dob = parsedDob.ToString("yyyy-MM-dd");
+                res.ExtractedFields.Add("dob");
             }
             else
             {
-                var dobMatch = Regex.Match(text, @"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})\b");
-                if (dobMatch.Success && DateTime.TryParse(dobMatch.Value, out DateTime parsedDob))
+                var ageMatch = Regex.Match(text, @"\b(?:age|umar|umer|years?|yo|y/o|yrs?|yr|saal|sal)\s*[:\-\s]?\s*(?<age>\d{1,3})\b|\b(?<age>\d{1,3})\s*(?:years?(?:\s*old)?|yo|y/o|yrs?|yr|saal|sal)\b|\b(?:he|she)\s+is\s+(?<age>\d{1,3})\b", RegexOptions.IgnoreCase);
+                if (!ageMatch.Success)
                 {
-                    res.Dob = parsedDob.ToString("yyyy-MM-dd");
-                    res.ExtractedFields.Add("dob");
+                    ageMatch = Regex.Match(text, @"\b(?<age>\d{1,2})\s*(?:male|female|m|f)\b|\b(?:male|female|m|f)\s+(?<age>\d{1,2})\b", RegexOptions.IgnoreCase);
+                }
+                if (!ageMatch.Success)
+                {
+                    ageMatch = Regex.Match(text, @"\b(?<age>\d{1,2})\b");
+                }
+
+                if (ageMatch.Success && ageMatch.Groups["age"].Success)
+                {
+                    var ageStr = ageMatch.Groups["age"].Value;
+                    if (int.TryParse(ageStr, out int age) && age > 0 && age <= 120)
+                    {
+                        int birthYear = DateTime.Now.Year - age;
+                        res.Dob = $"{birthYear:D4}-01-01";
+                        res.ExtractedFields.Add("dob");
+                    }
                 }
             }
 
@@ -707,24 +721,48 @@ Rules:
         [HttpPost("teeth/update-bulk")]
         public async Task<IActionResult> UpdateBulk([FromBody] UpdateBulkRequest request)
         {
-            if (request == null || request.Updates == null) return BadRequest("Invalid request.");
+            if (request == null || request.Updates == null || request.PatientId <= 0) 
+                return BadRequest(new { message = "Invalid request or missing patient ID." });
 
-            foreach (var update in request.Updates)
+            try
             {
-                int tNumber = 1;
-                string? toothKey = update.ToothKey;
-                string dentitionCat = update.DentitionCategory ?? "Adult";
-
-                if (update.ToothNumber is System.Text.Json.JsonElement je)
+                var patient = await _repository.GetPatientByIdAsync(request.PatientId);
+                if (patient == null)
                 {
-                    if (je.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    return NotFound(new { message = $"Patient with ID {request.PatientId} not found." });
+                }
+
+                foreach (var update in request.Updates)
+                {
+                    int tNumber = 1;
+                    string? toothKey = update.ToothKey;
+                    string dentitionCat = update.DentitionCategory ?? "Adult";
+
+                    if (update.ToothNumber is System.Text.Json.JsonElement je)
                     {
-                        tNumber = je.GetInt32();
-                        if (string.IsNullOrEmpty(toothKey)) toothKey = tNumber.ToString();
+                        if (je.ValueKind == System.Text.Json.JsonValueKind.Number)
+                        {
+                            tNumber = je.GetInt32();
+                            if (string.IsNullOrEmpty(toothKey)) toothKey = tNumber.ToString();
+                        }
+                        else if (je.ValueKind == System.Text.Json.JsonValueKind.String)
+                        {
+                            string str = je.GetString()?.Trim().ToUpper() ?? "1";
+                            if (string.IsNullOrEmpty(toothKey)) toothKey = str;
+                            if (int.TryParse(str, out int parsed))
+                            {
+                                tNumber = parsed;
+                            }
+                            else if (str.Length == 1 && str[0] >= 'A' && str[0] <= 'T')
+                            {
+                                tNumber = str[0] - 'A' + 1; // Maps A->1, B->2, ... T->20
+                                dentitionCat = "Pediatric";
+                            }
+                        }
                     }
-                    else if (je.ValueKind == System.Text.Json.JsonValueKind.String)
+                    else if (update.ToothNumber != null)
                     {
-                        string str = je.GetString()?.Trim().ToUpper() ?? "1";
+                        string str = update.ToothNumber.ToString()?.Trim().ToUpper() ?? "1";
                         if (string.IsNullOrEmpty(toothKey)) toothKey = str;
                         if (int.TryParse(str, out int parsed))
                         {
@@ -732,72 +770,63 @@ Rules:
                         }
                         else if (str.Length == 1 && str[0] >= 'A' && str[0] <= 'T')
                         {
-                            tNumber = str[0] - 'A' + 1; // Maps A->1, B->2, ... T->20
+                            tNumber = str[0] - 'A' + 1;
                             dentitionCat = "Pediatric";
                         }
                     }
-                }
-                else if (update.ToothNumber != null)
-                {
-                    string str = update.ToothNumber.ToString()?.Trim().ToUpper() ?? "1";
-                    if (string.IsNullOrEmpty(toothKey)) toothKey = str;
-                    if (int.TryParse(str, out int parsed))
-                    {
-                        tNumber = parsed;
-                    }
-                    else if (str.Length == 1 && str[0] >= 'A' && str[0] <= 'T')
-                    {
-                        tNumber = str[0] - 'A' + 1;
-                        dentitionCat = "Pediatric";
-                    }
-                }
 
-                // Preserve actual diagnosis/condition and prevent generic status overwrite
-                string resolvedStatus = update.ConditionStatus ?? update.Status ?? "Healthy";
-                if (resolvedStatus == "Completed" || resolvedStatus == "Planned" || resolvedStatus == "In Progress")
-                {
-                    if (!string.IsNullOrEmpty(update.Comment))
+                    // Preserve actual diagnosis/condition and prevent generic status overwrite
+                    string resolvedStatus = update.ConditionStatus ?? update.Status ?? "Healthy";
+                    if (resolvedStatus == "Completed" || resolvedStatus == "Planned" || resolvedStatus == "In Progress")
                     {
-                        var firstPart = update.Comment.Split(new[] { '.', '•', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim();
-                        if (!string.IsNullOrEmpty(firstPart) && firstPart.Length > 3 && !firstPart.StartsWith("Status:", StringComparison.OrdinalIgnoreCase))
+                        if (!string.IsNullOrEmpty(update.Comment))
                         {
-                            resolvedStatus = firstPart;
+                            var firstPart = update.Comment.Split(new[] { '.', '•', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim();
+                            if (!string.IsNullOrEmpty(firstPart) && firstPart.Length > 3 && !firstPart.StartsWith("Status:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                resolvedStatus = firstPart;
+                            }
                         }
                     }
+
+                    string resolvedComment = update.Comment ?? update.Comments ?? "Updated via Chart / Treatment Plan";
+                    if (!string.IsNullOrEmpty(update.Status) && !resolvedComment.Contains($"Status: {update.Status}"))
+                    {
+                        resolvedComment += $" • Status: {update.Status}";
+                    }
+                    if (!string.IsNullOrEmpty(update.CdtCode) && !resolvedComment.Contains(update.CdtCode))
+                    {
+                        resolvedComment += $" (CDT: {update.CdtCode})";
+                    }
+
+                    await _repository.UpdateTeethStateBulkAsync(
+                        request.PatientId, 
+                        tNumber, 
+                        update.Color ?? "#10B981", 
+                        resolvedStatus, 
+                        resolvedStatus, // using status as treatment performed
+                        resolvedComment,
+                        dentitionCat,
+                        toothKey,
+                        update.DoctorId
+                    );
                 }
 
-                string resolvedComment = update.Comment ?? update.Comments ?? "Updated via Chart / Treatment Plan";
-                if (!string.IsNullOrEmpty(update.Status) && !resolvedComment.Contains($"Status: {update.Status}"))
-                {
-                    resolvedComment += $" • Status: {update.Status}";
-                }
-                if (!string.IsNullOrEmpty(update.CdtCode) && !resolvedComment.Contains(update.CdtCode))
-                {
-                    resolvedComment += $" (CDT: {update.CdtCode})";
-                }
-
-                await _repository.UpdateTeethStateBulkAsync(
-                    request.PatientId, 
-                    tNumber, 
-                    update.Color ?? "#10B981", 
-                    resolvedStatus, 
-                    resolvedStatus, // using status as treatment performed
-                    resolvedComment,
-                    dentitionCat,
-                    toothKey,
-                    update.DoctorId
+                int primaryDocId = request.Updates?.FirstOrDefault()?.DoctorId ?? 1;
+                GeminiCallLogger.LogSync(
+                    "TEETH ODONTOGRAM BULK SYNC",
+                    request.PatientId,
+                    primaryDocId,
+                    $"Successfully synchronized {request.Updates?.Count ?? 0} teeth observations to SQL database."
                 );
+                
+                return Ok(new { message = "Bulk update successful." });
             }
-
-            int primaryDocId = request.Updates?.FirstOrDefault()?.DoctorId ?? 1;
-            GeminiCallLogger.LogSync(
-                "TEETH ODONTOGRAM BULK SYNC",
-                request.PatientId,
-                primaryDocId,
-                $"Successfully synchronized {request.Updates?.Count ?? 0} teeth observations to SQL database."
-            );
-            
-            return Ok(new { message = "Bulk update successful." });
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update teeth in bulk for patient {PatientId}", request.PatientId);
+                return StatusCode(500, new { message = $"Error saving teeth observations: {ex.Message}" });
+            }
         }
 
         [HttpPost("{id}/chart/export")]
@@ -938,23 +967,50 @@ Rules:
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdatePatient(int id, [FromBody] Patient req)
         {
-            if (req == null) return BadRequest("Invalid patient data.");
+            if (req == null) return BadRequest(new { message = "Invalid patient data." });
 
             // Validate Profile Image Size (Max 5MB)
             if (req.ProfileImage != null && req.ProfileImage.Length > 5 * 1024 * 1024)
             {
-                return BadRequest("Profile image size exceeds the maximum limit of 5MB.");
+                return BadRequest(new { message = "Profile image size exceeds the maximum limit of 5MB." });
+            }
+
+            // Sanitize names and prevent string truncation
+            req.FirstName = CleanAndFormatName(req.FirstName);
+            if (string.IsNullOrWhiteSpace(req.FirstName)) req.FirstName = "Patient";
+            req.LastName = CleanAndFormatName(req.LastName);
+            if (string.IsNullOrWhiteSpace(req.LastName)) req.LastName = "Record";
+
+            // Validate DOB realistic bounds (cannot be in future, and max 125 years old)
+            if (req.DOB != DateTime.MinValue)
+            {
+                if (req.DOB > DateTime.UtcNow)
+                {
+                    return BadRequest(new { message = "Date of Birth cannot be in the future." });
+                }
+                if (req.DOB < DateTime.UtcNow.AddYears(-125))
+                {
+                    return BadRequest(new { message = "Date of Birth cannot be older than 125 years." });
+                }
             }
             
-            var existing = await _repository.GetPatientByIdAsync(id);
-            if (existing == null) return NotFound(new { message = "Patient not found." });
+            try
+            {
+                var existing = await _repository.GetPatientByIdAsync(id);
+                if (existing == null) return NotFound(new { message = "Patient not found." });
 
-            req.PatientID = id;
-            // Preserve doctor ID if not supplied
-            if (req.DoctorID <= 0) req.DoctorID = existing.DoctorID;
+                req.PatientID = id;
+                // Preserve doctor ID if not supplied
+                if (req.DoctorID <= 0) req.DoctorID = existing.DoctorID;
 
-            await _repository.UpdatePatientAsync(req);
-            return Ok(new { message = "Patient information updated successfully.", patient = req });
+                await _repository.UpdatePatientAsync(req);
+                return Ok(new { message = "Patient information updated successfully.", patient = req });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update patient {Id}", id);
+                return BadRequest(new { message = ex.Message });
+            }
         }
 
         [HttpPost("{id}/profile-image")]
@@ -1021,6 +1077,19 @@ Rules:
             
             await _repository.UpdatePatientTreatmentPlanAsync(id, req.TreatmentPlan ?? "General Consultation", req.TreatmentStage, req.TargetShade);
             return Ok(new { message = "Treatment plan updated successfully." });
+        }
+
+        public static string CleanAndFormatName(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+            // Strip HTML tags
+            var stripped = System.Text.RegularExpressions.Regex.Replace(name, "<.*?>", string.Empty);
+            // Allow letters, whitespace, hyphens, and apostrophes
+            stripped = System.Text.RegularExpressions.Regex.Replace(stripped, @"[^\p{L}\p{M}'\s\-]", string.Empty);
+            stripped = System.Text.RegularExpressions.Regex.Replace(stripped, @"\s+", " ").Trim();
+            if (stripped.Length > 50) stripped = stripped.Substring(0, 50).Trim();
+            if (string.IsNullOrWhiteSpace(stripped)) return "Patient";
+            return System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(stripped.ToLower());
         }
 
         public static byte[] GetDefaultAvatarBytes(string? gender, out string mimeType)
