@@ -310,14 +310,49 @@ namespace DentistAPI.Services
       </div>
     </header>
 
-    <!-- Top Architecture Banner -->
-    <div class=""banner"">
-      <div class=""banner-icon"">💡</div>
-      <div class=""banner-content"">
-        <h3>Server Access Not Required — Zero-Server Direct Mode Active</h3>
-        <p>
-          Aapko Windows Server par login karne ya Node.js / Docker chalane ki <strong>bilkul zaroorat nahi hai</strong>. 
-          Aapka IIS API server appointment confirmations, reminders, aur billing alerts ke liye <strong>Direct WhatsApp (wa.me)</strong> links aur automated DB queuing manage karta hai.
+    <!-- Real WhatsApp Gateway Connection Status & QR Code Pairing Card -->
+    <div class=""card"" style=""margin-bottom: 24px; border: 1px solid rgba(16, 185, 129, 0.3); background: linear-gradient(180deg, #131c31 0%, #0d1527 100%);"">
+      <div style=""display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px;"">
+        <div style=""display: flex; align-items: center; gap: 10px;"">
+          <span style=""font-size: 24px;"">⚡</span>
+          <div>
+            <h3 style=""font-size: 17px; font-weight: 700; color: #f8fafc; margin: 0;"">Real WhatsApp Engine (Docker OpenWA Gateway)</h3>
+            <p style=""font-size: 12px; color: var(--text-muted); margin: 0;"">Connected with .NET Core API on http://localhost:2785 (No Mock Data)</p>
+          </div>
+        </div>
+        <span id=""liveGatewayBadge"" class=""badge"" style=""background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); padding: 5px 12px; font-size: 12px; border-radius: 999px;"">
+          ⏳ Checking Connection...
+        </span>
+      </div>
+
+      <!-- Pairing QR Section (shown when not connected) -->
+      <div id=""qrSection"" style=""display: flex; flex-wrap: wrap; gap: 24px; align-items: center; background: #0b1120; padding: 20px; border-radius: 14px; border: 1px dashed #334155;"">
+        <div style=""text-align: center; min-width: 200px;"">
+          <div style=""background: #fff; padding: 10px; border-radius: 12px; display: inline-block; box-shadow: 0 4px 14px rgba(0,0,0,0.4);"">
+            <img id=""hubQrImg"" src=""/api/whatsapp/qr"" alt=""Scan QR Code"" style=""width: 180px; height: 180px; display: block; object-fit: contain;"" />
+          </div>
+          <div style=""font-size: 11px; color: var(--text-dim); margin-top: 8px;"" id=""qrStatusText"">Auto-refreshing live QR code...</div>
+        </div>
+        <div style=""flex: 1; min-width: 260px;"">
+          <h4 style=""font-size: 14px; font-weight: 700; color: #38bdf8; margin-bottom: 8px;"">📲 Link Your WhatsApp Phone:</h4>
+          <ol style=""font-size: 12.5px; color: #cbd5e1; line-height: 1.8; margin-left: 20px;"">
+            <li>Open <strong>WhatsApp</strong> on your mobile phone (e.g. <code>03345081202</code>).</li>
+            <li>Tap <strong>Settings</strong> (iOS) or <strong>Three Dots ⋮</strong> (Android).</li>
+            <li>Tap <strong>Linked Devices</strong> &rarr; <strong>Link a Device</strong>.</li>
+            <li>Point your camera at this QR code to connect instantly.</li>
+          </ol>
+          <div style=""margin-top: 10px; font-size: 11px; color: var(--text-muted);"">
+            🔒 End-to-end encrypted session is persisted in Docker storage volume. Only need to scan once!
+          </div>
+        </div>
+      </div>
+
+      <!-- Connected Success Section (shown when connected) -->
+      <div id=""connectedSection"" style=""display: none; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 18px 24px; border-radius: 14px;"">
+        <h4 style=""font-size: 16px; font-weight: 700; color: #34d399; margin-bottom: 4px;"">🎉 Real WhatsApp Gateway Connected & Ready!</h4>
+        <p style=""font-size: 13px; color: #d1fae5; margin: 0;"" id=""connectedPhoneInfo"">Phone Active</p>
+        <p style=""font-size: 12px; color: #a7f3d0; margin-top: 6px;"">
+          All appointment bookings, treatment reminders, and clinical notifications from DentistAPI are now delivered directly to patients' WhatsApp in real-time.
         </p>
       </div>
     </div>
@@ -565,10 +600,58 @@ namespace DentistAPI.Services
       }
     }
 
+    async function checkGatewayAndQr() {
+      try {
+        const res = await fetch('/api/whatsapp/status');
+        if (res.ok) {
+          const data = await res.json();
+          const isConnected = data.isConnected === true || (data.status || '').toLowerCase() === 'working' || (data.status || '').toLowerCase() === 'connected';
+          const badge = document.getElementById('liveGatewayBadge');
+          const qrSec = document.getElementById('qrSection');
+          const connSec = document.getElementById('connectedSection');
+          const topText = document.getElementById('statusText');
+
+          if (isConnected) {
+            badge.style.background = 'rgba(16, 185, 129, 0.2)';
+            badge.style.color = '#34d399';
+            badge.style.border = '1px solid rgba(16, 185, 129, 0.5)';
+            badge.innerText = '✓ Real WhatsApp Connected';
+            qrSec.style.display = 'none';
+            connSec.style.display = 'block';
+            document.getElementById('connectedPhoneInfo').innerText = 'Connected Number: +' + (data.connectedPhoneNumber || 'Active');
+            topText.innerText = 'Real WhatsApp Gateway Online';
+            return;
+          } else {
+            badge.style.background = 'rgba(245, 158, 11, 0.2)';
+            badge.style.color = '#fbbf24';
+            badge.style.border = '1px solid rgba(245, 158, 11, 0.5)';
+            badge.innerText = '⚡ Waiting for QR Scan (' + (data.status || 'QR_READY') + ')';
+            qrSec.style.display = 'flex';
+            connSec.style.display = 'none';
+            topText.innerText = 'Waiting for WhatsApp QR Scan';
+          }
+        }
+
+        const qrRes = await fetch('/api/whatsapp/qr');
+        if (qrRes.ok) {
+          const qrData = await qrRes.json();
+          if (qrData.qr) {
+            document.getElementById('hubQrImg').src = qrData.qr;
+            document.getElementById('qrStatusText').innerText = 'Live QR active (' + new Date().toLocaleTimeString() + ')';
+          }
+        }
+      } catch (err) {
+        console.warn('Gateway polling notice:', err);
+      }
+    }
+
     // Auto-init
     document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('phoneInput').value = '03345081202';
       setTemplate('reminder');
       fetchLogs();
+      checkGatewayAndQr();
+      setInterval(checkGatewayAndQr, 4000);
     });
   </script>
 </body>
