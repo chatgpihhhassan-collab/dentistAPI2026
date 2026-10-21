@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dentia Clinic - Real WhatsApp Web Pairing</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 24px;
+      padding: 36px 32px;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+    .badge-qr { background: #78350f; color: #fde047; border: 1px solid #b45309; }
+    .badge-live { background: #064e3b; color: #34d399; border: 1px solid #059669; }
+    .title {
+      font-size: 22px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+    .qr-frame {
+      background: #ffffff;
+      padding: 16px;
+      border-radius: 18px;
+      display: inline-block;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+      margin-bottom: 24px;
+      min-width: 250px;
+      min-height: 250px;
+      position: relative;
+    }
+    .qr-frame img {
+      width: 240px;
+      height: 240px;
+      display: block;
+      border-radius: 8px;
+    }
+    .instructions {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      padding: 16px;
+      text-align: left;
+      font-size: 12px;
+      color: #cbd5e1;
+      margin-bottom: 20px;
+    }
+    .instructions ol {
+      margin-left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .footer-status {
+      font-size: 11px;
+      color: #64748b;
+      font-family: monospace;
+    }
+    .connected-box {
+      display: none;
+      padding: 24px 16px;
+      background: #064e3b;
+      border: 1px solid #059669;
+      border-radius: 16px;
+      margin-bottom: 20px;
+    }
+    .connected-box h3 {
+      color: #34d399;
+      font-size: 18px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+    .connected-box p {
+      font-size: 13px;
+      color: #a7f3d0;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div id="statusBadge" class="badge badge-qr">⚡ WhatsApp Pairing Ready</div>
+    
+    <h1 class="title">Scan WhatsApp QR Code</h1>
+    <p class="subtitle">Connect your real phone to Dentia Dental Hospital's Live WhatsApp Gateway (No Mock Data).</p>
+
+    <!-- Normal QR Area -->
+    <div id="qrArea">
+      <div class="qr-frame">
+        <img id="qrImage" src="" alt="Loading Real QR Code..." />
+      </div>
+
+      <div class="instructions">
+        <ol>
+          <li>Open <strong>WhatsApp</strong> on your mobile phone.</li>
+          <li>Tap <strong>Settings</strong> (iOS) or <strong>Three Dots ⋮</strong> (Android).</li>
+          <li>Select <strong>Linked Devices</strong> &rarr; <strong>Link a Device</strong>.</li>
+          <li>Point your camera at this QR code to connect.</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- Connected Banner (Appears automatically after scanning) -->
+    <div id="connectedArea" class="connected-box">
+      <h3>🎉 Connected to Real WhatsApp!</h3>
+      <p id="connectedDetails">Phone Number: Active</p>
+      <p style="margin-top: 8px; font-size: 11px; color: #d1fae5;">
+        All appointment reminders and notifications from .NET Core will now be sent via this WhatsApp account.
+      </p>
+    </div>
+
+    <div class="footer-status" id="footerLog">
+      Gateway: http://localhost:2785 | Session: dentia-clinic-bot
+    </div>
+  </div>
+
+  <script>
+    const API_KEY = 'owa_k1_dentia_prod_secret_key_998877_full_secure_key';
+    const SESSION_ID = '0b77bdb5-758f-423e-9956-1de99e13425c';
+    const BASE_URL = 'http://localhost:2785';
+
+    async function checkStatusAndQr() {
+      try {
+        // 1. Check Session Status
+        const statusRes = await fetch(`${BASE_URL}/api/sessions/${SESSION_ID}`, {
+          headers: { 'X-API-Key': API_KEY }
+        });
+        
+        if (statusRes.ok) {
+          const session = await statusRes.json();
+          const status = (session.status || '').toLowerCase();
+          
+          if (status === 'working' || status === 'connected') {
+            document.getElementById('qrArea').style.display = 'none';
+            document.getElementById('connectedArea').style.display = 'block';
+            document.getElementById('statusBadge').className = 'badge badge-live';
+            document.getElementById('statusBadge').innerText = '✓ Real WhatsApp Connected';
+            document.getElementById('connectedDetails').innerText = `Phone: +${session.phone || 'Active'} (${session.pushName || 'Clinic Official'})`;
+            document.getElementById('footerLog').innerText = `Status: ONLINE | Persistent in Docker Volume`;
+            return;
+          }
+        }
+
+        // 2. Fetch Fresh QR Code
+        const qrRes = await fetch(`${BASE_URL}/api/sessions/${SESSION_ID}/qr`, {
+          headers: { 'X-API-Key': API_KEY }
+        });
+
+        if (qrRes.ok) {
+          const data = await qrRes.json();
+          const qrVal = data.qrCode || data.qr;
+          if (qrVal) {
+            document.getElementById('qrImage').src = qrVal;
+            document.getElementById('footerLog').innerText = `Live QR Code refreshed: ${new Date().toLocaleTimeString()}`;
+          }
+        }
+      } catch (err) {
+        document.getElementById('footerLog').innerText = `Gateway polling: ${err.message}`;
+      }
+    }
+
+    // Initial fetch and poll every 4 seconds
+    checkStatusAndQr();
+    setInterval(checkStatusAndQr, 4000);
+  </script>
+</body>
+</html>

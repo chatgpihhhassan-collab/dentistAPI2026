@@ -96,7 +96,7 @@ namespace DentistAPI.Services
 
             try
             {
-                using var request = CreateAuthenticatedRequest(HttpMethod.Get, $"/api/sessions/{_sessionId}/status");
+                using var request = CreateAuthenticatedRequest(HttpMethod.Get, $"/api/sessions/{_sessionId}");
                 using var response = await _httpClient.SendAsync(request);
 
                 if (response.IsSuccessStatusCode)
@@ -109,10 +109,22 @@ namespace DentistAPI.Services
                     dto.Status = status.ToUpperInvariant();
                     dto.IsConnected = dto.Status == "WORKING" || dto.Status == "CONNECTED";
 
-                    if (root.TryGetProperty("me", out var me) && me.ValueKind == JsonValueKind.Object)
+                    if (root.TryGetProperty("phone", out var phoneProp) && !string.IsNullOrEmpty(phoneProp.GetString()))
                     {
-                        if (me.TryGetProperty("id", out var idProp)) dto.ConnectedPhoneNumber = idProp.GetString();
-                        if (me.TryGetProperty("pushname", out var pnProp)) dto.PushName = pnProp.GetString();
+                        dto.ConnectedPhoneNumber = phoneProp.GetString();
+                    }
+                    else if (root.TryGetProperty("me", out var me) && me.ValueKind == JsonValueKind.Object && me.TryGetProperty("id", out var idProp))
+                    {
+                        dto.ConnectedPhoneNumber = idProp.GetString();
+                    }
+
+                    if (root.TryGetProperty("pushName", out var pnProp) && !string.IsNullOrEmpty(pnProp.GetString()))
+                    {
+                        dto.PushName = pnProp.GetString();
+                    }
+                    else if (root.TryGetProperty("me", out var me2) && me2.ValueKind == JsonValueKind.Object && me2.TryGetProperty("pushname", out var pn2))
+                    {
+                        dto.PushName = pn2.GetString();
                     }
 
                     dto.LastPingAt = DateTime.UtcNow;
@@ -195,7 +207,7 @@ namespace DentistAPI.Services
 
                 var jsonStr = await response.Content.ReadAsStringAsync();
                 using var doc = JsonDocument.Parse(jsonStr);
-                if (doc.RootElement.TryGetProperty("qr", out var qrElem))
+                if (doc.RootElement.TryGetProperty("qr", out var qrElem) || doc.RootElement.TryGetProperty("qrCode", out qrElem))
                 {
                     var qrVal = qrElem.GetString();
                     if (!string.IsNullOrEmpty(qrVal) && !qrVal.StartsWith("data:"))
