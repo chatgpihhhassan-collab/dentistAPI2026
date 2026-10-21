@@ -84,11 +84,68 @@ namespace DentistAPI.Services
             return request;
         }
 
+        private static string? _cachedActiveSessionId;
+        private static DateTime _lastSessionCheck = DateTime.MinValue;
+
+        private async Task<string> ResolveActiveSessionIdAsync()
+        {
+            if (!string.IsNullOrEmpty(_cachedActiveSessionId) && (DateTime.UtcNow - _lastSessionCheck).TotalSeconds < 15)
+            {
+                return _cachedActiveSessionId;
+            }
+
+            try
+            {
+                using var req = CreateAuthenticatedRequest(HttpMethod.Get, "/api/sessions");
+                using var res = await _httpClient.SendAsync(req);
+                if (res.IsSuccessStatusCode)
+                {
+                    var content = await res.Content.ReadAsStringAsync();
+                    using var doc = JsonDocument.Parse(content);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                    {
+                        // 1. Prioritize any session that is ready, working, or connected
+                        foreach (var item in doc.RootElement.EnumerateArray())
+                        {
+                            string status = item.TryGetProperty("status", out var s) ? (s.GetString() ?? "").ToLowerInvariant() : "";
+                            string id = item.TryGetProperty("id", out var idElem) ? (idElem.GetString() ?? "") : "";
+                            if (status == "ready" || status == "working" || status == "connected")
+                            {
+                                _cachedActiveSessionId = id;
+                                _lastSessionCheck = DateTime.UtcNow;
+                                return id;
+                            }
+                        }
+
+                        // 2. Fall back to matching configured ID or name
+                        foreach (var item in doc.RootElement.EnumerateArray())
+                        {
+                            string id = item.TryGetProperty("id", out var idElem) ? (idElem.GetString() ?? "") : "";
+                            string name = item.TryGetProperty("name", out var nElem) ? (nElem.GetString() ?? "") : "";
+                            if (id.Equals(_sessionId, StringComparison.OrdinalIgnoreCase) || name.Equals(_sessionId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                _cachedActiveSessionId = id;
+                                _lastSessionCheck = DateTime.UtcNow;
+                                return id;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to auto-discover active OpenWA session");
+            }
+
+            return _sessionId;
+        }
+
         public async Task<WhatsAppSessionStatusDto> GetSessionStatusAsync()
         {
+            var activeSessionId = await ResolveActiveSessionIdAsync();
             var dto = new WhatsAppSessionStatusDto
             {
-                SessionName = _sessionId,
+                SessionName = activeSessionId,
                 GatewayUrl = _baseUrl,
                 Status = "DISCONNECTED",
                 IsConnected = false
@@ -96,7 +153,7 @@ namespace DentistAPI.Services
 
             try
             {
-                using var request = CreateAuthenticatedRequest(HttpMethod.Get, $"/api/sessions/{_sessionId}");
+                using var request = CreateAuthenticatedRequest(HttpMethod.Get, $"/api/sessions/{activeSessionId}");
                 using var response = await _httpClient.SendAsync(request);
 
                 if (response.IsSuccessStatusCode)
@@ -107,7 +164,7 @@ namespace DentistAPI.Services
 
                     string status = root.TryGetProperty("status", out var s) ? s.GetString() ?? "UNKNOWN" : "UNKNOWN";
                     dto.Status = status.ToUpperInvariant();
-                    dto.IsConnected = dto.Status == "WORKING" || dto.Status == "CONNECTED";
+                    dto.IsConnected = dto.Status == "WORKING" || dto.Status == "CONNECTED" || dto.Status == "READY";
 
                     if (root.TryGetProperty("phone", out var phoneProp) && !string.IsNullOrEmpty(phoneProp.GetString()))
                     {
@@ -276,7 +333,8 @@ namespace DentistAPI.Services
 
             try
             {
-                using var request = CreateAuthenticatedRequest(HttpMethod.Post, $"/api/sessions/{_sessionId}/messages/send-text");
+                var activeSessionId = await ResolveActiveSessionIdAsync();
+                using var request = CreateAuthenticatedRequest(HttpMethod.Post, $"/api/sessions/{activeSessionId}/messages/send-text");
                 var payload = new OpenWASendTextRequest
                 {
                     ChatId = norm.ChatId,
@@ -293,7 +351,11 @@ namespace DentistAPI.Services
                     try
                     {
                         using var doc = JsonDocument.Parse(content);
-                        if (doc.RootElement.TryGetProperty("id", out var idElem))
+                        if (doc.RootElement.TryGetProperty("messageId", out var midElem))
+                        {
+                            openWaId = midElem.GetString();
+                        }
+                        else if (doc.RootElement.TryGetProperty("id", out var idElem))
                         {
                             openWaId = idElem.GetString();
                         }
@@ -683,18 +745,32 @@ namespace DentistAPI.Services
 
                 if (tableExists == 0) return Enumerable.Empty<WhatsAppMessageEntity>();
 
-                string sql = @"
+                var hasPatients = await conn.ExecuteScalarAsync<int>(@"
+                    SELECT COUNT(*) FROM sys.tables t 
+                    INNER JOIN sys.schemas s ON s.schema_id = t.schema_id 
+                    WHERE s.name = 'dentist' AND t.name = 'Patients'") > 0;
+                var hasDoctors = await conn.ExecuteScalarAsync<int>(@"
+                    SELECT COUNT(*) FROM sys.tables t 
+                    INNER JOIN sys.schemas s ON s.schema_id = t.schema_id 
+                    WHERE s.name = 'dentist' AND t.name = 'Doctors'") > 0;
+
+                string patientSelect = hasPatients ? "p.FirstName + ' ' + p.LastName AS PatientName," : "CAST(NULL AS NVARCHAR(200)) AS PatientName,";
+                string doctorSelect = hasDoctors ? "d.FirstName + ' ' + d.LastName AS DoctorName" : "CAST(NULL AS NVARCHAR(200)) AS DoctorName";
+                string patientJoin = hasPatients ? "LEFT JOIN [dentist].[Patients] p ON p.PatientID = m.PatientID" : "";
+                string doctorJoin = hasDoctors ? "LEFT JOIN [dentist].[Doctors] d ON d.DoctorID = m.DoctorID" : "";
+
+                string sql = $@"
                     SELECT TOP (@Limit) 
                         m.MessageID, m.PatientID, m.AppointmentID, m.DoctorID,
                         m.RecipientPhone, m.ChatID, m.MessageBody, m.MessageType,
                         m.Status, m.OpenWAMessageID, m.SessionName, m.RetryCount,
                         m.MaxRetries, m.ErrorMessage, m.ScheduledFor, m.SentAt,
                         m.DeliveredAt, m.ReadAt, m.CreatedAt, m.UpdatedAt,
-                        p.FirstName + ' ' + p.LastName AS PatientName,
-                        d.FirstName + ' ' + d.LastName AS DoctorName
+                        {patientSelect}
+                        {doctorSelect}
                     FROM [dentist].[WhatsAppMessages] m
-                    LEFT JOIN [dentist].[Patients] p ON p.PatientID = m.PatientID
-                    LEFT JOIN [dentist].[Doctors] d ON d.DoctorID = m.DoctorID
+                    {patientJoin}
+                    {doctorJoin}
                     WHERE (@Status IS NULL OR m.Status = @Status)
                     ORDER BY m.MessageID DESC";
 
