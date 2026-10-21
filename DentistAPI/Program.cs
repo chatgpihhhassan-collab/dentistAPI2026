@@ -209,8 +209,6 @@ app.UseStaticFiles();
 app.UseAuthorization();
 app.MapControllers().RequireRateLimiting("general-policy");
 
-// Dedicated route for WhatsApp Clinical Hub & Gateway Dashboard (Zero-Server Mode)
-app.MapGet("/whatsapp", () => Results.Content(DentistAPI.Services.WhatsAppHubPage.Render(), "text/html; charset=utf-8")).ExcludeFromDescription();
 
 app.MapFallbackToFile("index.html");
 

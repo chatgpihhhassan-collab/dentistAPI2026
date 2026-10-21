@@ -499,15 +499,29 @@ namespace DentistAPI.Services
                 var gatewayStatus = await GetSessionStatusAsync();
                 bool isGatewayAvailable = gatewayStatus.IsConnected;
 
+                // Check optional clinical table existence before joining
+                var hasPatients = await conn.ExecuteScalarAsync<int>(@"
+                    SELECT COUNT(*) FROM sys.tables t 
+                    INNER JOIN sys.schemas s ON s.schema_id = t.schema_id 
+                    WHERE s.name = 'dentist' AND t.name = 'Patients'") > 0;
+                var hasDoctors = await conn.ExecuteScalarAsync<int>(@"
+                    SELECT COUNT(*) FROM sys.tables t 
+                    INNER JOIN sys.schemas s ON s.schema_id = t.schema_id 
+                    WHERE s.name = 'dentist' AND t.name = 'Doctors'") > 0;
+
+                string patientSelect = hasPatients ? "p.FirstName + ' ' + p.LastName AS PatientName, p.Email AS PatientEmail" : "CAST(NULL AS NVARCHAR(200)) AS PatientName, CAST(NULL AS NVARCHAR(200)) AS PatientEmail";
+                string doctorSelect = hasDoctors ? "d.FirstName + ' ' + d.LastName AS DoctorName" : "CAST(NULL AS NVARCHAR(200)) AS DoctorName";
+                string patientJoin = hasPatients ? "LEFT JOIN [dentist].[Patients] p ON p.PatientID = m.PatientID" : "";
+                string doctorJoin = hasDoctors ? "LEFT JOIN [dentist].[Doctors] d ON d.DoctorID = m.DoctorID" : "";
+
                 // Fetch top pending/retrying messages (up to rate limit: e.g. 5)
-                string fetchSql = @"
+                string fetchSql = $@"
                     SELECT TOP (@BatchSize) m.*, 
-                           p.FirstName + ' ' + p.LastName AS PatientName,
-                           d.FirstName + ' ' + d.LastName AS DoctorName,
-                           p.Email AS PatientEmail
+                           {patientSelect},
+                           {doctorSelect}
                     FROM [dentist].[WhatsAppMessages] m
-                    LEFT JOIN [dentist].[Patients] p ON p.PatientID = m.PatientID
-                    LEFT JOIN [dentist].[Doctors] d ON d.DoctorID = m.DoctorID
+                    {patientJoin}
+                    {doctorJoin}
                     WHERE m.Status IN ('Pending', 'Retrying') 
                       AND m.ScheduledFor <= SYSUTCDATETIME()
                     ORDER BY m.ScheduledFor ASC";

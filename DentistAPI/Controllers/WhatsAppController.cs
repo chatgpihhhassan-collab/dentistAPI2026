@@ -52,7 +52,7 @@ namespace DentistAPI.Controllers
                 method = "POST",
                 samplePayload = new
                 {
-                    phone = "923345081202",
+                    phone = "03345081202",
                     message = "🦷 Dentia Dental Hospital: Real WhatsApp test notification"
                 },
                 swaggerDocs = "/swagger"
