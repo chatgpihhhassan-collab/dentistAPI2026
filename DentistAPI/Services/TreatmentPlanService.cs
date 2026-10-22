@@ -401,10 +401,24 @@ namespace DentistAPI.Services
             });
 
             // Write Audit Log
-            await conn.ExecuteAsync(@"
-                INSERT INTO [dentist].[AuditLogs] (Entity, EntityID, Action, OldValue, NewValue, UserID, UserRole, CreatedAt)
-                VALUES ('TreatmentItem', @Id, 'status_transition', @OldStatus, @NewStatus, @UserId, @UserRole, SYSUTCDATETIME())",
-                new { Id = itemId, OldStatus = oldStatus, NewStatus = newStatus, UserId = request.UserId, UserRole = request.UserRole });
+            try
+            {
+                await conn.ExecuteAsync(@"
+                    INSERT INTO [dentist].[AuditLogs] (Entity, EntityID, Action, OldValue, NewValue, UserID, UserRole, CreatedAt)
+                    VALUES ('TreatmentItem', @Id, 'status_transition', @OldStatus, @NewStatus, @UserId, @UserRole, SYSUTCDATETIME())",
+                    new 
+                    { 
+                        Id = itemId, 
+                        OldStatus = oldStatus, 
+                        NewStatus = newStatus, 
+                        UserId = request.UserId > 0 ? request.UserId : 1, 
+                        UserRole = !string.IsNullOrWhiteSpace(request.UserRole) ? request.UserRole : "Doctor" 
+                    });
+            }
+            catch (Exception auditEx)
+            {
+                _logger.LogWarning(auditEx, "AuditLog writing failed during status transition for TreatmentItem #{ItemId}", itemId);
+            }
 
             return rows > 0;
         }

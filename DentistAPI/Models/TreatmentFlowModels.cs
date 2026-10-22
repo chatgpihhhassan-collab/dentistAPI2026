@@ -31,12 +31,18 @@ namespace DentistAPI.Models
     public class TreatmentItem
     {
         public long TreatmentItemID { get; set; }
+        public long Id => TreatmentItemID; // JSON alias
+
         public int PatientID { get; set; }
         public int DoctorID { get; set; }
         public int ToothNumber { get; set; }
+        public int ToothNo => ToothNumber; // JSON alias
+
         public string ToothKey { get; set; } = "1";
         public string ProcedureCode { get; set; } = string.Empty;
         public string ProcedureName { get; set; } = string.Empty;
+        public string Name => ProcedureName; // JSON alias
+
         public decimal Fee { get; set; }
         public string Currency { get; set; } = "PKR";
         public string Status { get; set; } = "proposed"; // 'draft', 'proposed', 'accepted', 'in_progress', 'completed', 'declined', 'cancelled'
