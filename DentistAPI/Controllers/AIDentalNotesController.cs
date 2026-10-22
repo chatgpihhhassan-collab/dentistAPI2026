@@ -22,6 +22,7 @@ namespace DentistAPI.Controllers
         private readonly ISpeechToTextService _sttService;
         private readonly IGeminiDentalNotesService _geminiService;
         private readonly DentalRepository _dentalRepository;
+        private readonly ITreatmentPlanService _treatmentPlanService;
         private readonly IFileUploadSecurityService _fileUploadService;
         private readonly ILogger<AIDentalNotesController> _logger;
 
@@ -30,6 +31,7 @@ namespace DentistAPI.Controllers
             ISpeechToTextService sttService,
             IGeminiDentalNotesService geminiService,
             DentalRepository dentalRepository,
+            ITreatmentPlanService treatmentPlanService,
             IFileUploadSecurityService fileUploadService,
             ILogger<AIDentalNotesController> logger)
         {
@@ -37,6 +39,7 @@ namespace DentistAPI.Controllers
             _sttService = sttService;
             _geminiService = geminiService;
             _dentalRepository = dentalRepository;
+            _treatmentPlanService = treatmentPlanService;
             _fileUploadService = fileUploadService;
             _logger = logger;
         }
@@ -232,6 +235,30 @@ namespace DentistAPI.Controllers
                                 update.Status,
                                 "Auto-updated from Doctor speech command"
                             );
+
+                            // Create draft treatment item in single source of truth (TreatmentItems)
+                            if (!string.Equals(update.Status, "healthy", StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(update.Status, "sound", StringComparison.OrdinalIgnoreCase))
+                            {
+                                try
+                                {
+                                    await _treatmentPlanService.CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                                    {
+                                        PatientId = (int)request.PatientId,
+                                        DoctorId = (int)request.DentistId,
+                                        Name = update.Status,
+                                        ToothNo = update.ToothNumber,
+                                        Source = "voice",
+                                        SourceRef = $"Voice Note #{noteId}",
+                                        Status = "draft",
+                                        PriceNote = "Auto-extracted from voice consultation (Draft - requires doctor confirmation)"
+                                    });
+                                }
+                                catch (Exception voiceDraftEx)
+                                {
+                                    _logger.LogWarning(voiceDraftEx, "Non-fatal notice: voice draft item creation skipped.");
+                                }
+                            }
                         }
                     }
 

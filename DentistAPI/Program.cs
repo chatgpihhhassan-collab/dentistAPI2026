@@ -28,6 +28,8 @@ builder.Services.AddScoped<DentalRepository>();
 builder.Services.AddScoped<IAIDentalNotesRepository, AIDentalNotesRepository>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IDataNormalizationService, DataNormalizationService>();
+builder.Services.AddScoped<ITreatmentPlanService, TreatmentPlanService>();
+builder.Services.AddScoped<TreatmentPlanService>();
 
 // Register WhatsApp OpenWA Service & Background Queue Processor
 builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>(client =>

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using DentistAPI.Repositories;
 using DentistAPI.Models;
+using DentistAPI.Services;
 
 namespace DentistAPI.Controllers
 {
@@ -14,22 +15,420 @@ namespace DentistAPI.Controllers
     public class TreatmentItemsController : ControllerBase
     {
         private readonly DentalRepository _repository;
+        private readonly ITreatmentPlanService _treatmentPlanService;
         private readonly ILogger<TreatmentItemsController> _logger;
 
-        public TreatmentItemsController(DentalRepository repository, ILogger<TreatmentItemsController> logger)
+        public TreatmentItemsController(
+            DentalRepository repository, 
+            ITreatmentPlanService treatmentPlanService,
+            ILogger<TreatmentItemsController> logger)
         {
             _repository = repository;
+            _treatmentPlanService = treatmentPlanService;
             _logger = logger;
         }
 
         // ==========================================
-        // 1. PATIENT CHECK-IN & AUTO CONSULTATION FEE
+        // 1. GET TREATMENT ITEMS (Plan view vs Invoices view)
+        // ==========================================
+        [HttpGet("patients/{id:int}/treatment-items")]
+        public async Task<IActionResult> GetTreatmentItems(int id, [FromQuery] string? view, [FromQuery] string? status)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+
+            try
+            {
+                // If specific view requested (plan or invoices)
+                if (!string.IsNullOrWhiteSpace(view))
+                {
+                    var items = await _treatmentPlanService.GetTreatmentItemsAsync(id, view);
+                    return Ok(items);
+                }
+
+                // If status filter provided
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    string[] statuses = status.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                                             .Select(s => s.Trim().ToLower())
+                                             .ToArray();
+                    var items = await _repository.GetTreatmentItemsAsync(id, statuses);
+                    return Ok(items);
+                }
+
+                // Default: return plan view items
+                var defaultItems = await _treatmentPlanService.GetTreatmentItemsAsync(id, "plan");
+                return Ok(defaultItems);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving treatment items for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 2. CREATE TREATMENT ITEM (Manual, Voice, Directory)
+        // ==========================================
+        [HttpPost("patients/{id:int}/treatment-items")]
+        public async Task<IActionResult> CreateTreatmentItem(int id, [FromBody] CreateTreatmentItemRequest request)
+        {
+            if (id <= 0 || request == null)
+            {
+                return BadRequest(new { message = "Valid patient ID and request body are required." });
+            }
+
+            request.PatientId = id;
+            try
+            {
+                var item = await _treatmentPlanService.CreateTreatmentItemAsync(request);
+                return Ok(new
+                {
+                    success = true,
+                    item,
+                    message = $"Treatment '{item.ProcedureName}' added to plan successfully."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating treatment item for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 3. UPDATE TREATMENT ITEM (Status Transitions & Price Updates)
+        // ==========================================
+        [HttpPatch("treatment-items/{id:long}")]
+        public async Task<IActionResult> UpdateTreatmentItem(long id, [FromBody] UpdateTreatmentItemRequest request)
+        {
+            if (id <= 0 || request == null)
+            {
+                return BadRequest(new { message = "Valid treatment item ID and payload are required." });
+            }
+
+            try
+            {
+                bool success = await _treatmentPlanService.UpdateTreatmentItemStatusAsync(id, request);
+                if (!success) return NotFound(new { message = $"Treatment item #{id} not found." });
+
+                var updatedItem = await _treatmentPlanService.GetTreatmentItemByIdAsync(id);
+                return Ok(new
+                {
+                    success = true,
+                    item = updatedItem,
+                    message = $"Treatment updated successfully (Status: {updatedItem?.Status})."
+                });
+            }
+            catch (UnauthorizedAccessException uex)
+            {
+                return StatusCode(403, new { message = uex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating treatment item #{TreatmentItemId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 4. LINK APPOINTMENT TO TREATMENT ITEM
+        // ==========================================
+        [HttpPost("treatment-items/{id:long}/appointments")]
+        public async Task<IActionResult> LinkAppointment(long id, [FromBody] LinkAppointmentRequest request)
+        {
+            if (id <= 0 || request == null)
+            {
+                return BadRequest(new { message = "Valid treatment item ID and request body are required." });
+            }
+
+            try
+            {
+                bool success = await _treatmentPlanService.LinkAppointmentAsync(id, request);
+                return Ok(new
+                {
+                    success,
+                    message = "Appointment linked to treatment item successfully."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error linking appointment to treatment item #{TreatmentItemId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 5. UNPLANNED FINDINGS FROM TEETHSTATE
+        // ==========================================
+        [HttpGet("patients/{id:int}/findings/unplanned")]
+        public async Task<IActionResult> GetUnplannedFindings(int id)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+
+            try
+            {
+                var findings = await _treatmentPlanService.GetUnplannedFindingsAsync(id);
+                return Ok(findings);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting unplanned findings for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 6. RECORD OBSERVATIONS -> TREATMENT ITEMS (Idempotent)
+        // ==========================================
+        [HttpPost("patients/{id:int}/observations")]
+        public async Task<IActionResult> RecordObservations(int id, [FromBody] RecordObservationRequest request)
+        {
+            if (id <= 0 || request == null || request.Observations == null || !request.Observations.Any())
+            {
+                return BadRequest(new { message = "Valid patient ID and at least one observation is required." });
+            }
+
+            request.PatientId = id;
+            if (request.DoctorId <= 0) request.DoctorId = 1;
+
+            try
+            {
+                // Save clinical observations into TreatmentItems via shared service
+                var createdList = new List<TreatmentItem>();
+                foreach (var obs in request.Observations)
+                {
+                    var item = await _treatmentPlanService.CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                    {
+                        PatientId = id,
+                        DoctorId = request.DoctorId,
+                        Name = !string.IsNullOrWhiteSpace(obs.ProcedureName) ? obs.ProcedureName : "Restorative Care",
+                        ProcedureCode = obs.ProcedureCode,
+                        ToothNo = obs.ToothNumber,
+                        Source = "chart_save",
+                        FinalPrice = obs.FeeOverride.HasValue ? (int)obs.FeeOverride.Value : null,
+                        Status = "proposed",
+                        PriceNote = obs.Notes
+                    });
+                    createdList.Add(item);
+                }
+
+                // Also call existing repository method for auto appointment schedule if appropriate
+                Appointment? autoAppointment = null;
+                try
+                {
+                    var (_, appt) = await _repository.SaveObservationsAsync(request);
+                    autoAppointment = appt;
+                }
+                catch (Exception repEx)
+                {
+                    _logger.LogWarning(repEx, "Observation auto-appointment notice");
+                }
+
+                string apptMsg = autoAppointment != null 
+                    ? $" Next appointment: {autoAppointment.PreferredDate:dd MMM yyyy, hh:mm tt}." 
+                    : "";
+
+                return Ok(new
+                {
+                    success = true,
+                    count = createdList.Count,
+                    createdItems = createdList,
+                    autoAppointment,
+                    message = $"{createdList.Count} treatments synchronized to plan.{apptMsg}"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving observations for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 7. RECORD FLEXIBLE PAYMENT WITH ALLOCATIONS
+        // ==========================================
+        [HttpPost("patients/{id:int}/payments")]
+        public async Task<IActionResult> RecordPayment(int id, [FromBody] RecordFlexiblePaymentRequest request)
+        {
+            if (id <= 0 || request == null)
+            {
+                return BadRequest(new { message = "Valid patient ID and payment request are required." });
+            }
+
+            request.PatientId = id;
+            try
+            {
+                var (success, message, receiptNo) = await _treatmentPlanService.RecordFlexiblePaymentAsync(request);
+                if (!success) return BadRequest(new { message });
+
+                var summary = await _treatmentPlanService.GetAccountSummaryAsync(id);
+                return Ok(new
+                {
+                    success = true,
+                    receiptNumber = receiptNo,
+                    message,
+                    summary
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error recording payment for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 8. ALLOCATE UNALLOCATED CREDIT
+        // ==========================================
+        [HttpPost("payments/allocations")]
+        public async Task<IActionResult> AllocateCredit([FromBody] AllocateCreditRequest request)
+        {
+            if (request == null || request.PatientId <= 0 || request.Allocations == null || !request.Allocations.Any())
+            {
+                return BadRequest(new { message = "Valid patient ID and allocations list required." });
+            }
+
+            try
+            {
+                var (success, message) = await _treatmentPlanService.AllocateCreditAsync(request);
+                if (!success) return BadRequest(new { message });
+
+                var summary = await _treatmentPlanService.GetAccountSummaryAsync(request.PatientId);
+                return Ok(new
+                {
+                    success = true,
+                    message,
+                    summary
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error allocating credit for patient {PatientId}", request.PatientId);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 9. VOID PAYMENT (Admin only, mandatory reason)
+        // ==========================================
+        [HttpPost("payments/void")]
+        public async Task<IActionResult> VoidPayment([FromBody] VoidPaymentRequest request)
+        {
+            if (request == null || request.PaymentId <= 0)
+            {
+                return BadRequest(new { message = "Valid payment ID is required." });
+            }
+
+            try
+            {
+                var (success, message) = await _treatmentPlanService.VoidPaymentAsync(request);
+                if (!success) return BadRequest(new { message });
+
+                return Ok(new
+                {
+                    success = true,
+                    message
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error voiding payment #{PaymentId}", request.PaymentId);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 10. PATIENT ACCOUNT SUMMARY
+        // ==========================================
+        [HttpGet("patients/{id:int}/account-summary")]
+        public async Task<IActionResult> GetAccountSummary(int id)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+
+            try
+            {
+                var summary = await _treatmentPlanService.GetAccountSummaryAsync(id);
+                return Ok(summary);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting account summary for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 11. ACTIVE PLANS FOR HEADER CHIPS
+        // ==========================================
+        [HttpGet("patients/{id:int}/active-plans")]
+        public async Task<IActionResult> GetActivePlans(int id)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+
+            try
+            {
+                var chips = await _treatmentPlanService.GetActivePlansAsync(id);
+                return Ok(chips);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting active plans for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 12. DIRECTORY MODALITIES AUTO-SYNC
+        // ==========================================
+        [HttpPost("patients/{id:int}/sync-directory")]
+        public async Task<IActionResult> SyncDirectoryModalities(int id, [FromQuery] int? doctorId)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+
+            try
+            {
+                int count = await _treatmentPlanService.SyncDirectoryModalitiesAsync(id, doctorId ?? 1);
+                return Ok(new
+                {
+                    success = true,
+                    syncedCount = count,
+                    message = count > 0 
+                        ? $"Synchronized {count} modality treatment(s) from directory into active plan."
+                        : "Directory modalities are already up to date."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error syncing directory modalities for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 13. PROCEDURES CATALOG
+        // ==========================================
+        [HttpGet("treatment-catalog")]
+        public async Task<IActionResult> GetCatalog()
+        {
+            try
+            {
+                var catalog = await _treatmentPlanService.GetCatalogAsync();
+                return Ok(catalog);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving treatment catalog");
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 14. LEGACY ENDPOINTS PRESERVED FOR FULL COMPATIBILITY
         // ==========================================
         [HttpPost("patients/{id:int}/checkin")]
         public async Task<IActionResult> CheckinPatient(int id, [FromBody] CheckinPatientRequest? request)
         {
             if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
-
             int doctorId = request?.DoctorId ?? 1;
             int? apptId = request?.AppointmentId;
 
@@ -54,9 +453,6 @@ namespace DentistAPI.Controllers
             }
         }
 
-        // ==========================================
-        // 2. RECORD X-RAY CHARGE AUTOMATICALLY
-        // ==========================================
         [HttpPost("patients/{id:int}/xrays/charge")]
         public async Task<IActionResult> ChargeXray(int id, [FromQuery] int? doctorId, [FromQuery] int? radiographId)
         {
@@ -79,249 +475,28 @@ namespace DentistAPI.Controllers
             }
         }
 
-        // ==========================================
-        // 3. RECORD OBSERVATIONS -> TREATMENT ITEMS + AUTO APPOINTMENT
-        // ==========================================
-        [HttpPost("patients/{id:int}/observations")]
-        public async Task<IActionResult> RecordObservations(int id, [FromBody] RecordObservationRequest request)
-        {
-            if (id <= 0 || request == null || request.Observations == null || !request.Observations.Any())
-            {
-                return BadRequest(new { message = "Valid patient ID and at least one observation is required." });
-            }
-
-            request.PatientId = id;
-            if (request.DoctorId <= 0) request.DoctorId = 1;
-
-            try
-            {
-                var (createdItems, autoAppointment) = await _repository.SaveObservationsAsync(request);
-
-                string apptMsg = autoAppointment != null 
-                    ? $"Next follow-up appointment automatically scheduled for {autoAppointment.PreferredDate:dd MMM yyyy, hh:mm tt}." 
-                    : "Linked to existing scheduled appointment.";
-
-                return Ok(new
-                {
-                    success = true,
-                    count = createdItems.Count,
-                    createdItems,
-                    autoAppointment,
-                    message = $"{createdItems.Count} treatments added to plan. {apptMsg}"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error saving observations for patient {PatientId}", id);
-                return BadRequest(new { message = ex.Message });
-            }
-        }
-
-        // ==========================================
-        // 4. GET TREATMENT ITEMS (FILTERED BY STATUSES)
-        // ==========================================
-        [HttpGet("patients/{id:int}/treatment-items")]
-        public async Task<IActionResult> GetTreatmentItems(int id, [FromQuery] string? status)
-        {
-            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
-
-            string[]? statuses = null;
-            if (!string.IsNullOrWhiteSpace(status))
-            {
-                statuses = status.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
-                                 .Select(s => s.Trim().ToLower())
-                                 .ToArray();
-            }
-
-            try
-            {
-                var items = await _repository.GetTreatmentItemsAsync(id, statuses);
-                return Ok(items);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving treatment items for patient {PatientId}", id);
-                return BadRequest(new { message = ex.Message });
-            }
-        }
-
-        // ==========================================
-        // 5. GET UNBILLED CHARGES (CONSULTATION, X-RAY)
-        // ==========================================
-        [HttpGet("patients/{id:int}/charges/unbilled")]
-        public async Task<IActionResult> GetUnbilledCharges(int id)
-        {
-            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
-
-            try
-            {
-                var charges = await _repository.GetUnbilledChargesAsync(id);
-                return Ok(charges);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving unbilled charges for patient {PatientId}", id);
-                return BadRequest(new { message = ex.Message });
-            }
-        }
-
-        // ==========================================
-        // 6. START TREATMENT: planned -> in_progress
-        // ==========================================
         [HttpPatch("treatment-items/{id:long}/start")]
         public async Task<IActionResult> StartTreatmentItem(long id, [FromQuery] int? userId)
         {
-            if (id <= 0) return BadRequest(new { message = "Valid treatment item ID is required." });
-
-            try
-            {
-                bool success = await _repository.StartTreatmentItemAsync(id, userId ?? 1);
-                return Ok(new
-                {
-                    success,
-                    treatmentItemId = id,
-                    status = "in_progress",
-                    message = "Treatment marked as in_progress."
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error starting treatment item {TreatmentItemId}", id);
-                return BadRequest(new { message = ex.Message });
-            }
+            return await UpdateTreatmentItem(id, new UpdateTreatmentItemRequest { Status = "in_progress", UserId = userId ?? 1, UserRole = "Doctor" });
         }
 
-        // ==========================================
-        // 7. COMPLETE TREATMENT: in_progress -> completed
-        // ==========================================
         [HttpPatch("treatment-items/{id:long}/complete")]
         public async Task<IActionResult> CompleteTreatmentItem(long id, [FromQuery] int? userId)
         {
-            if (id <= 0) return BadRequest(new { message = "Valid treatment item ID is required." });
-
-            try
-            {
-                bool success = await _repository.CompleteTreatmentItemAsync(id, userId ?? 1);
-                return Ok(new
-                {
-                    success,
-                    treatmentItemId = id,
-                    status = "completed",
-                    message = "Treatment completed successfully! It has been moved to Treatment & Invoices tab."
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error completing treatment item {TreatmentItemId}", id);
-                return BadRequest(new { message = ex.Message });
-            }
+            return await UpdateTreatmentItem(id, new UpdateTreatmentItemRequest { Status = "completed", UserId = userId ?? 1, UserRole = "Doctor" });
         }
 
-        // ==========================================
-        // 8. CANCEL TREATMENT: planned/in_progress -> cancelled
-        // ==========================================
         [HttpPatch("treatment-items/{id:long}/cancel")]
         public async Task<IActionResult> CancelTreatmentItem(long id, [FromBody] CancelTreatmentItemRequest? request)
         {
-            if (id <= 0) return BadRequest(new { message = "Valid treatment item ID is required." });
-
-            try
-            {
-                bool success = await _repository.CancelTreatmentItemAsync(id, request?.UserId ?? 1, request?.Reason);
-                return Ok(new
-                {
-                    success,
-                    treatmentItemId = id,
-                    status = "cancelled",
-                    message = "Treatment has been cancelled."
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error cancelling treatment item {TreatmentItemId}", id);
-                return BadRequest(new { message = ex.Message });
-            }
+            return await UpdateTreatmentItem(id, new UpdateTreatmentItemRequest { Status = "cancelled", ClosedReason = request?.Reason, UserId = request?.UserId ?? 1 });
         }
 
-        // ==========================================
-        // 9. RECORD ADVANCE PAYMENT AGAINST IN-PROGRESS ITEM
-        // ==========================================
-        [HttpPost("treatment-items/{id:long}/payments")]
-        public async Task<IActionResult> RecordAdvancePayment(long id, [FromBody] AdvancePaymentRequest request)
-        {
-            if (id <= 0 || request == null || request.Amount <= 0)
-            {
-                return BadRequest(new { message = "Valid treatment item ID and payment amount > 0 are required." });
-            }
-
-            try
-            {
-                string receiptNo = await _repository.RecordAdvancePaymentAsync(id, request);
-                return Ok(new
-                {
-                    success = true,
-                    receiptNumber = receiptNo,
-                    amount = request.Amount,
-                    message = $"Advance payment of Rs {request.Amount:N2} recorded successfully! Receipt #{receiptNo}."
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error recording advance payment for item {TreatmentItemId}", id);
-                return BadRequest(new { message = ex.Message });
-            }
-        }
-
-        // ==========================================
-        // 10. GENERATE UNIFIED MASTER INVOICE
-        // ==========================================
-        [HttpPost("patients/{id:int}/invoices")]
-        public async Task<IActionResult> GenerateUnifiedInvoice(int id, [FromBody] GenerateUnifiedInvoiceRequest request)
-        {
-            if (id <= 0 || request == null) return BadRequest(new { message = "Valid request payload is required." });
-
-            request.PatientId = id;
-            if (request.DoctorId <= 0) request.DoctorId = 1;
-
-            try
-            {
-                var (invoiceNo, total, advancesApplied, balance) = await _repository.GenerateUnifiedInvoiceAsync(request);
-                return Ok(new
-                {
-                    success = true,
-                    invoiceNumber = invoiceNo,
-                    totalAmount = total,
-                    advancesApplied,
-                    balanceAmount = balance,
-                    status = balance <= 0 ? "Paid" : (advancesApplied > 0 ? "Partially Paid" : "Unpaid"),
-                    message = $"Master Invoice {invoiceNo} generated successfully! Balance due: Rs {balance:N2}."
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error generating master invoice for patient {PatientId}", id);
-                return BadRequest(new { message = ex.Message });
-            }
-        }
-
-        // ==========================================
-        // 11. BILLING SUMMARY (4 CARDS + COUNTERS)
-        // ==========================================
         [HttpGet("patients/{id:int}/billing-summary")]
         public async Task<IActionResult> GetBillingSummary(int id)
         {
-            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
-
-            try
-            {
-                var summary = await _repository.GetPatientBillingSummaryAsync(id);
-                return Ok(summary);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting billing summary for patient {PatientId}", id);
-                return BadRequest(new { message = ex.Message });
-            }
+            return await GetAccountSummary(id);
         }
     }
 }
