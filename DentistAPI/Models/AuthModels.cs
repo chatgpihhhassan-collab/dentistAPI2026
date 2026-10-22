@@ -35,6 +35,15 @@ namespace DentistAPI.Models
         public string? OrganizationLogoUrl { get; set; }
         public string? OrganizationCity { get; set; }
         public string? HospitalDepartment { get; set; } = "Department of Oral Surgery & Dentistry";
+
+        // Doctor's Clinic Practice Profile & Live Timing
+        public string? Phone { get; set; } = "+92 334 5081202";
+        public string? Email { get; set; } = "bajwa.376@gmail.com";
+        public string? ClinicName { get; set; } = "Bajwa Dental & Oral Surgery Clinic";
+        public string? ClinicAddress { get; set; }
+        public string? ClinicOperatingHours { get; set; } = "Mon - Sat: 03:00 - 20:00";
+        public bool? IsClinicOpenManualOverride { get; set; } // null = auto by hours, true = force open, false = force closed
+        public string? Role { get; set; } = "Doctor";
     }
 
     public class Organization
@@ -164,6 +173,12 @@ namespace DentistAPI.Models
         public string? ProfileImageUrl { get; set; }
         public int? OrganizationID { get; set; }
         public string? OrganizationName { get; set; }
+        public string? Phone { get; set; }
+        public string? Email { get; set; }
+        public string? ClinicName { get; set; }
+        public string? ClinicAddress { get; set; }
+        public string? ClinicOperatingHours { get; set; }
+        public bool? IsClinicOpenManualOverride { get; set; }
     }
 
     public class UpdateDoctorRequest
@@ -186,6 +201,12 @@ namespace DentistAPI.Models
         public bool IsActive { get; set; } = true;
         public int? OrganizationID { get; set; }
         public string? HospitalDepartment { get; set; }
+        public string? Phone { get; set; }
+        public string? Email { get; set; }
+        public string? ClinicName { get; set; }
+        public string? ClinicAddress { get; set; }
+        public string? ClinicOperatingHours { get; set; }
+        public bool? IsClinicOpenManualOverride { get; set; }
     }
 
     public class CreateDoctorProfileRequest
@@ -210,10 +231,27 @@ namespace DentistAPI.Models
         public bool IsActive { get; set; } = true;
         public int? OrganizationID { get; set; }
         public string? HospitalDepartment { get; set; }
+        public string? Phone { get; set; }
+        public string? Email { get; set; }
+        public string? ClinicName { get; set; }
+        public string? ClinicAddress { get; set; }
+        public string? ClinicOperatingHours { get; set; }
+        public bool? IsClinicOpenManualOverride { get; set; }
+    }
+
+    public class UpdateDoctorClinicProfileRequest
+    {
+        public string? Phone { get; set; }
+        public string? Email { get; set; }
+        public string? ClinicName { get; set; }
+        public string? ClinicAddress { get; set; }
+        public string? ClinicOperatingHours { get; set; }
+        public bool? IsClinicOpenManualOverride { get; set; }
     }
 
     public class UpdatePasswordRequest
     {
+        public string? OldPassword { get; set; }
         public string Password { get; set; } = string.Empty;
     }
 
@@ -225,5 +263,19 @@ namespace DentistAPI.Models
     public class ToggleOrganizationStatusRequest
     {
         public bool IsActive { get; set; }
+    }
+
+    public class ForgotPasswordVerifyRequest
+    {
+        public string Username { get; set; } = string.Empty;
+        public string EmailOrPhone { get; set; } = string.Empty;
+    }
+
+    public class ForgotPasswordResetRequest
+    {
+        public string Username { get; set; } = string.Empty;
+        public string? ResetToken { get; set; }
+        public string NewPassword { get; set; } = string.Empty;
+        public string? ConfirmPassword { get; set; }
     }
 }

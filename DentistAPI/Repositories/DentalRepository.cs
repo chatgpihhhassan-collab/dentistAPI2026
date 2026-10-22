@@ -286,9 +286,9 @@ namespace DentistAPI.Repositories
         {
             using var connection = CreateConnection();
             string query = @"
-                INSERT INTO [dentist].[Doctors] (Username, PasswordHash, FirstName, LastName, Region) 
+                INSERT INTO [dentist].[Doctors] (Username, PasswordHash, FirstName, LastName, Region, CreatedAt) 
                 OUTPUT INSERTED.DoctorID 
-                VALUES (@Username, @PasswordHash, @FirstName, @LastName, @Region)";
+                VALUES (@Username, @PasswordHash, @FirstName, @LastName, @Region, SYSUTCDATETIME())";
             return await connection.QuerySingleAsync<int>(query, new { Username = username, PasswordHash = passwordHash, FirstName = firstName, LastName = lastName, Region = region });
         }
 
@@ -336,6 +336,20 @@ namespace DentistAPI.Repositories
                         ALTER TABLE [dentist].[Doctors] ADD ReviewCount INT NULL DEFAULT 25;
                     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dentist].[Doctors]') AND name = 'IsActive')
                         ALTER TABLE [dentist].[Doctors] ADD IsActive BIT NULL DEFAULT 1;
+
+                    -- Per-Doctor Clinic Practice Profile & Live Schedule Columns
+                    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dentist].[Doctors]') AND name = 'Phone')
+                        ALTER TABLE [dentist].[Doctors] ADD [Phone] NVARCHAR(50) NULL DEFAULT '+92 334 5081202';
+                    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dentist].[Doctors]') AND name = 'Email')
+                        ALTER TABLE [dentist].[Doctors] ADD [Email] NVARCHAR(150) NULL DEFAULT 'bajwa.376@gmail.com';
+                    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dentist].[Doctors]') AND name = 'ClinicName')
+                        ALTER TABLE [dentist].[Doctors] ADD [ClinicName] NVARCHAR(200) NULL DEFAULT 'Bajwa Dental & Oral Surgery Clinic';
+                    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dentist].[Doctors]') AND name = 'ClinicAddress')
+                        ALTER TABLE [dentist].[Doctors] ADD [ClinicAddress] NVARCHAR(300) NULL;
+                    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dentist].[Doctors]') AND name = 'ClinicOperatingHours')
+                        ALTER TABLE [dentist].[Doctors] ADD [ClinicOperatingHours] NVARCHAR(150) NULL DEFAULT 'Mon - Sat: 03:00 - 20:00';
+                    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dentist].[Doctors]') AND name = 'IsClinicOpenManualOverride')
+                        ALTER TABLE [dentist].[Doctors] ADD [IsClinicOpenManualOverride] BIT NULL;
 
                     -- Organizations master table
                     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE object_id = OBJECT_ID(N'[dentist].[Organizations]'))
@@ -421,21 +435,28 @@ namespace DentistAPI.Repositories
             await EnsureDoctorColumnsExistAsync(connection);
             return await connection.QuerySingleOrDefaultAsync<Doctor>(@"
                 SELECT d.DoctorID, d.Username, d.FirstName, d.LastName, d.Region, d.CreatedAt, d.IsSuperAdmin,
-                       ISNULL(d.Specialization, 'General Dental Surgeon') AS Specialization,
-                       ISNULL(d.Title, 'BDS, RDS') AS Title,
-                       ISNULL(d.YearsOfExperience, 5) AS YearsOfExperience,
+                       d.Specialization,
+                       d.Title,
+                       ISNULL(d.YearsOfExperience, 0) AS YearsOfExperience,
                        d.Biography,
                        d.OrganizationWorkHistory,
                        d.Education,
                        d.Certifications,
-                       ISNULL(d.ConsultationFee, 100.00) AS ConsultationFee,
+                       ISNULL(d.ConsultationFee, 0.00) AS ConsultationFee,
                        d.ProfileImageUrl,
-                       ISNULL(d.Languages, 'English, Urdu') AS Languages,
-                       ISNULL(d.Rating, 4.90) AS Rating,
-                       ISNULL(d.ReviewCount, 25) AS ReviewCount,
+                       d.Languages,
+                       ISNULL(d.Rating, 5.00) AS Rating,
+                       ISNULL(d.ReviewCount, 0) AS ReviewCount,
                        ISNULL(d.IsActive, 1) AS IsActive,
                        d.OrganizationID,
-                       ISNULL(d.HospitalDepartment, 'Department of Oral Surgery & Dentistry') AS HospitalDepartment,
+                       d.HospitalDepartment,
+                       d.Phone,
+                       d.Email,
+                       d.ClinicName,
+                       d.ClinicAddress,
+                       d.ClinicOperatingHours,
+                       d.IsClinicOpenManualOverride,
+                       ISNULL(d.Role, CASE WHEN d.IsSuperAdmin = 1 THEN 'SuperAdmin' ELSE 'Doctor' END) AS Role,
                        o.Name AS OrganizationName,
                        o.LogoUrl AS OrganizationLogoUrl,
                        o.City AS OrganizationCity
@@ -450,27 +471,34 @@ namespace DentistAPI.Repositories
             await EnsureDoctorColumnsExistAsync(connection);
             return await connection.QueryAsync<Doctor>(@"
                 SELECT d.DoctorID, d.Username, d.FirstName, d.LastName, d.Region, d.CreatedAt, d.IsSuperAdmin,
-                       ISNULL(d.Specialization, 'General Dental Surgeon') AS Specialization,
-                       ISNULL(d.Title, 'BDS, RDS') AS Title,
-                       ISNULL(d.YearsOfExperience, 5) AS YearsOfExperience,
+                       d.Specialization,
+                       d.Title,
+                       ISNULL(d.YearsOfExperience, 0) AS YearsOfExperience,
                        d.Biography,
                        d.OrganizationWorkHistory,
                        d.Education,
                        d.Certifications,
-                       ISNULL(d.ConsultationFee, 100.00) AS ConsultationFee,
+                       ISNULL(d.ConsultationFee, 0.00) AS ConsultationFee,
                        d.ProfileImageUrl,
-                       ISNULL(d.Languages, 'English, Urdu') AS Languages,
-                       ISNULL(d.Rating, 4.90) AS Rating,
-                       ISNULL(d.ReviewCount, 25) AS ReviewCount,
+                       d.Languages,
+                       ISNULL(d.Rating, 5.00) AS Rating,
+                       ISNULL(d.ReviewCount, 0) AS ReviewCount,
                        ISNULL(d.IsActive, 1) AS IsActive,
                        d.OrganizationID,
-                       ISNULL(d.HospitalDepartment, 'Department of Oral Surgery & Dentistry') AS HospitalDepartment,
+                       d.HospitalDepartment,
+                       d.Phone,
+                       d.Email,
+                       d.ClinicName,
+                       d.ClinicAddress,
+                       d.ClinicOperatingHours,
+                       d.IsClinicOpenManualOverride,
+                       ISNULL(d.Role, CASE WHEN d.IsSuperAdmin = 1 THEN 'SuperAdmin' ELSE 'Doctor' END) AS Role,
                        o.Name AS OrganizationName,
                        o.LogoUrl AS OrganizationLogoUrl,
                        o.City AS OrganizationCity
                 FROM [dentist].[Doctors] d
                 LEFT JOIN [dentist].[Organizations] o ON o.OrganizationID = d.OrganizationID
-                WHERE d.IsSuperAdmin = 0 AND (d.IsActive IS NULL OR d.IsActive = 1)
+                WHERE d.IsSuperAdmin = 0 AND (d.IsActive IS NULL OR d.IsActive = 1) AND (d.Role IS NULL OR d.Role != 'Receptionist')
                 ORDER BY d.DoctorID ASC");
         }
 
@@ -480,21 +508,28 @@ namespace DentistAPI.Repositories
             await EnsureDoctorColumnsExistAsync(connection);
             return await connection.QueryAsync<Doctor>(@"
                 SELECT d.DoctorID, d.Username, d.FirstName, d.LastName, d.Region, d.CreatedAt, d.IsSuperAdmin,
-                       ISNULL(d.Specialization, 'General Dental Surgeon') AS Specialization,
-                       ISNULL(d.Title, 'BDS, RDS') AS Title,
-                       ISNULL(d.YearsOfExperience, 5) AS YearsOfExperience,
+                       d.Specialization,
+                       d.Title,
+                       ISNULL(d.YearsOfExperience, 0) AS YearsOfExperience,
                        d.Biography,
                        d.OrganizationWorkHistory,
                        d.Education,
                        d.Certifications,
-                       ISNULL(d.ConsultationFee, 100.00) AS ConsultationFee,
+                       ISNULL(d.ConsultationFee, 0.00) AS ConsultationFee,
                        d.ProfileImageUrl,
-                       ISNULL(d.Languages, 'English, Urdu') AS Languages,
-                       ISNULL(d.Rating, 4.90) AS Rating,
-                       ISNULL(d.ReviewCount, 25) AS ReviewCount,
+                       d.Languages,
+                       ISNULL(d.Rating, 5.00) AS Rating,
+                       ISNULL(d.ReviewCount, 0) AS ReviewCount,
                        ISNULL(d.IsActive, 1) AS IsActive,
                        d.OrganizationID,
-                       ISNULL(d.HospitalDepartment, 'Department of Oral Surgery & Dentistry') AS HospitalDepartment,
+                       d.HospitalDepartment,
+                       d.Phone,
+                       d.Email,
+                       d.ClinicName,
+                       d.ClinicAddress,
+                       d.ClinicOperatingHours,
+                       d.IsClinicOpenManualOverride,
+                       ISNULL(d.Role, CASE WHEN d.IsSuperAdmin = 1 THEN 'SuperAdmin' ELSE 'Doctor' END) AS Role,
                        o.Name AS OrganizationName,
                        o.LogoUrl AS OrganizationLogoUrl,
                        o.City AS OrganizationCity
@@ -528,11 +563,17 @@ namespace DentistAPI.Repositories
                     ConsultationFee = @ConsultationFee,
                     ProfileImageUrl = @ProfileImageUrl,
                     Languages = @Languages,
-                    Rating = @Rating,
-                    ReviewCount = @ReviewCount,
+                    Rating = CASE WHEN @Rating > 0 THEN @Rating ELSE Rating END,
+                    ReviewCount = CASE WHEN @ReviewCount >= 0 THEN @ReviewCount ELSE ReviewCount END,
                     IsActive = @IsActive,
                     OrganizationID = @OrganizationID,
-                    HospitalDepartment = @HospitalDepartment
+                    HospitalDepartment = @HospitalDepartment,
+                    Phone = @Phone,
+                    Email = @Email,
+                    ClinicName = @ClinicName,
+                    ClinicAddress = @ClinicAddress,
+                    ClinicOperatingHours = @ClinicOperatingHours,
+                    IsClinicOpenManualOverride = @IsClinicOpenManualOverride
                 WHERE DoctorID = @Id";
             return await connection.ExecuteAsync(sql, new
             {
@@ -554,7 +595,38 @@ namespace DentistAPI.Repositories
                 ReviewCount = request.ReviewCount,
                 IsActive = request.IsActive,
                 OrganizationID = request.OrganizationID,
-                HospitalDepartment = request.HospitalDepartment ?? "Department of Oral Surgery & Dentistry"
+                HospitalDepartment = request.HospitalDepartment,
+                Phone = request.Phone,
+                Email = request.Email,
+                ClinicName = request.ClinicName,
+                ClinicAddress = request.ClinicAddress,
+                ClinicOperatingHours = request.ClinicOperatingHours,
+                IsClinicOpenManualOverride = request.IsClinicOpenManualOverride
+            });
+        }
+
+        public async Task<int> UpdateDoctorClinicSettingsAsync(int doctorId, UpdateDoctorClinicProfileRequest request)
+        {
+            using var connection = CreateConnection();
+            await EnsureDoctorColumnsExistAsync(connection);
+            string sql = @"
+                UPDATE [dentist].[Doctors] SET 
+                    Phone = COALESCE(@Phone, Phone),
+                    Email = COALESCE(@Email, Email),
+                    ClinicName = COALESCE(@ClinicName, ClinicName),
+                    ClinicAddress = COALESCE(@ClinicAddress, ClinicAddress),
+                    ClinicOperatingHours = COALESCE(@ClinicOperatingHours, ClinicOperatingHours),
+                    IsClinicOpenManualOverride = @IsClinicOpenManualOverride
+                WHERE DoctorID = @DoctorID";
+            return await connection.ExecuteAsync(sql, new
+            {
+                DoctorID = doctorId,
+                Phone = request.Phone,
+                Email = request.Email,
+                ClinicName = request.ClinicName,
+                ClinicAddress = request.ClinicAddress,
+                ClinicOperatingHours = request.ClinicOperatingHours,
+                IsClinicOpenManualOverride = request.IsClinicOpenManualOverride
             });
         }
 
@@ -571,7 +643,7 @@ namespace DentistAPI.Repositories
                 ) 
                 OUTPUT INSERTED.DoctorID 
                 VALUES (
-                    @Username, @PasswordHash, @FirstName, @LastName, @Region, GETDATE(), 0,
+                    @Username, @PasswordHash, @FirstName, @LastName, @Region, SYSUTCDATETIME(), 0,
                     @Specialization, @Title, @YearsOfExperience, @Biography, @OrganizationWorkHistory,
                     @Education, @Certifications, @ConsultationFee, @ProfileImageUrl, @Languages, @Rating, @ReviewCount, @IsActive,
                     @OrganizationID, @HospitalDepartment
@@ -676,7 +748,7 @@ namespace DentistAPI.Repositories
                 ) 
                 OUTPUT INSERTED.OrganizationID 
                 VALUES (
-                    @Name, @Slug, @Type, @Address, @City, @Country, @Phone, @Email, @Website, @LogoUrl, @HeroImageUrl, @Description, @Accreditation, @IsActive, GETDATE()
+                    @Name, @Slug, @Type, @Address, @City, @Country, @Phone, @Email, @Website, @LogoUrl, @HeroImageUrl, @Description, @Accreditation, @IsActive, SYSUTCDATETIME()
                 )";
             return await connection.QuerySingleAsync<int>(sql, request);
         }
@@ -742,8 +814,18 @@ namespace DentistAPI.Repositories
                     UPDATE [dentist].[DoctorOrganizations] SET RoleInOrg = @Role, Department = @Dept, ConsultationDays = @Days, IsPrimary = @IsPrimary WHERE DoctorID = @DoctorID AND OrganizationID = @OrgId
                 ELSE
                     INSERT INTO [dentist].[DoctorOrganizations] (DoctorID, OrganizationID, RoleInOrg, Department, ConsultationDays, IsPrimary, CreatedAt)
-                    VALUES (@DoctorID, @OrgId, @Role, @Dept, @Days, @IsPrimary, GETDATE())";
+                    VALUES (@DoctorID, @OrgId, @Role, @Dept, @Days, @IsPrimary, SYSUTCDATETIME())";
             return await connection.ExecuteAsync(junctionSql, new { DoctorID = doctorId, OrgId = orgId, Role = role, Dept = dept, Days = days, IsPrimary = isPrimary });
+        }
+
+        public async Task<bool> IsDoctorAssignedToOrganizationAsync(int orgId, int doctorId)
+        {
+            using var connection = CreateConnection();
+            await EnsureDoctorColumnsExistAsync(connection);
+            int count = await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(1) FROM [dentist].[DoctorOrganizations] WHERE DoctorID = @DoctorID AND OrganizationID = @OrgId", 
+                new { DoctorID = doctorId, OrgId = orgId });
+            return count > 0;
         }
 
         public async Task<int> RemoveDoctorFromOrganizationAsync(int orgId, int doctorId)
@@ -752,6 +834,17 @@ namespace DentistAPI.Repositories
             await EnsureDoctorColumnsExistAsync(connection);
             await connection.ExecuteAsync("UPDATE [dentist].[Doctors] SET OrganizationID = NULL WHERE DoctorID = @DoctorID AND OrganizationID = @OrgId", new { DoctorID = doctorId, OrgId = orgId });
             return await connection.ExecuteAsync("DELETE FROM [dentist].[DoctorOrganizations] WHERE DoctorID = @DoctorID AND OrganizationID = @OrgId", new { DoctorID = doctorId, OrgId = orgId });
+        }
+
+        public async Task<Doctor?> GetDoctorWithPasswordByIdAsync(int id)
+        {
+            using var connection = CreateConnection();
+            await EnsureDoctorColumnsExistAsync(connection);
+            return await connection.QuerySingleOrDefaultAsync<Doctor>(@"
+                SELECT d.*, o.Name AS OrganizationName, o.LogoUrl AS OrganizationLogoUrl, o.City AS OrganizationCity
+                FROM [dentist].[Doctors] d
+                LEFT JOIN [dentist].[Organizations] o ON o.OrganizationID = d.OrganizationID
+                WHERE d.DoctorID = @Id", new { Id = id });
         }
 
         public async Task<int> UpdateDoctorPasswordAsync(int id, string passwordHash)
