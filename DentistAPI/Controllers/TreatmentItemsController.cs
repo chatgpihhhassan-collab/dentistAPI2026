@@ -32,6 +32,7 @@ namespace DentistAPI.Controllers
         // 1. GET TREATMENT ITEMS (Plan view vs Invoices view)
         // ==========================================
         [HttpGet("patients/{id:int}/treatment-items")]
+        [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
         public async Task<IActionResult> GetTreatmentItems(int id, [FromQuery] string? view, [FromQuery] string? status)
         {
             if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
@@ -77,6 +78,13 @@ namespace DentistAPI.Controllers
                 return BadRequest(new { message = "Valid patient ID and request body are required." });
             }
 
+            // Zero or negative fee validation
+            if ((request.FinalPrice.HasValue && request.FinalPrice.Value <= 0) ||
+                (request.EstimatedPrice.HasValue && request.EstimatedPrice.Value <= 0))
+            {
+                return BadRequest(new { message = "Procedure fee must be greater than zero. Procedures cannot be added with a zero or negative fee." });
+            }
+
             request.PatientId = id;
             try
             {
@@ -104,6 +112,11 @@ namespace DentistAPI.Controllers
             if (id <= 0 || request == null)
             {
                 return BadRequest(new { message = "Valid treatment item ID and payload are required." });
+            }
+
+            if (request.FinalPrice.HasValue && request.FinalPrice.Value <= 0)
+            {
+                return BadRequest(new { message = "Procedure fee must be greater than zero. Zero or negative fee is not allowed." });
             }
 
             try
@@ -309,7 +322,7 @@ namespace DentistAPI.Controllers
         }
 
         // ==========================================
-        // 9. VOID PAYMENT (Admin only, mandatory reason)
+        // 9. VOID PAYMENT (Clinicians & Admins, mandatory reason)
         // ==========================================
         [HttpPost("payments/void")]
         public async Task<IActionResult> VoidPayment([FromBody] VoidPaymentRequest request)
@@ -338,9 +351,70 @@ namespace DentistAPI.Controllers
         }
 
         // ==========================================
+        // 9B. DELETE / VOID PAYMENT BY ID ALIAS
+        // ==========================================
+        [HttpDelete("patients/{patientId:int}/payments/{paymentId:long}")]
+        public async Task<IActionResult> DeletePayment(int patientId, long paymentId, [FromQuery] string? reason)
+        {
+            if (patientId <= 0 || paymentId <= 0)
+            {
+                return BadRequest(new { message = "Valid patient ID and payment ID are required." });
+            }
+
+            try
+            {
+                var request = new VoidPaymentRequest
+                {
+                    PaymentId = paymentId,
+                    Reason = !string.IsNullOrWhiteSpace(reason) ? reason : "Payment deleted/voided by clinician",
+                    UserId = 1,
+                    UserRole = "Doctor"
+                };
+
+                var (success, message) = await _treatmentPlanService.VoidPaymentAsync(request);
+                if (!success) return BadRequest(new { message });
+
+                var summary = await _treatmentPlanService.GetAccountSummaryAsync(patientId);
+                return Ok(new
+                {
+                    success = true,
+                    message,
+                    summary
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting payment #{PaymentId} for patient {PatientId}", paymentId, patientId);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 9C. PATIENT PAYMENTS HISTORY
+        // ==========================================
+        [HttpGet("patients/{id:int}/payments")]
+        [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+        public async Task<IActionResult> GetPatientPayments(int id)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+
+            try
+            {
+                var payments = await _treatmentPlanService.GetPatientPaymentsAsync(id);
+                return Ok(payments);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting payments for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
         // 10. PATIENT ACCOUNT SUMMARY
         // ==========================================
         [HttpGet("patients/{id:int}/account-summary")]
+        [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
         public async Task<IActionResult> GetAccountSummary(int id)
         {
             if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });

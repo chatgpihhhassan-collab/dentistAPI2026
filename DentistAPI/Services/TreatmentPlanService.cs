@@ -22,6 +22,7 @@ namespace DentistAPI.Services
         Task<(bool Success, string Message, string ReceiptNumber)> RecordFlexiblePaymentAsync(RecordFlexiblePaymentRequest request);
         Task<(bool Success, string Message)> AllocateCreditAsync(AllocateCreditRequest request);
         Task<(bool Success, string Message)> VoidPaymentAsync(VoidPaymentRequest request);
+        Task<List<PaymentDetailDto>> GetPatientPaymentsAsync(int patientId);
         Task<AccountSummaryDto> GetAccountSummaryAsync(int patientId);
         Task<List<ActivePlanChipDto>> GetActivePlansAsync(int patientId);
         Task<List<UnplannedFindingDto>> GetUnplannedFindingsAsync(int patientId);
@@ -85,7 +86,7 @@ namespace DentistAPI.Services
                     WHERE (procedure_code = @Code AND @Code <> '') OR [name] LIKE @NameLike",
                     new { Code = request.ProcedureCode ?? "", NameLike = $"%{request.Name}%" });
 
-                if (catalogItem != null)
+                if (catalogItem != null && catalogItem.DefaultPrice > 0)
                 {
                     finalPrice = catalogItem.DefaultPrice;
                     estimatedPrice = catalogItem.DefaultPrice;
@@ -95,8 +96,7 @@ namespace DentistAPI.Services
                 }
                 else
                 {
-                    finalPrice = 10000; // Standard clinical fallback
-                    estimatedPrice = 10000;
+                    throw new InvalidOperationException("Procedure fee must be greater than zero. Procedures cannot be added with a zero or negative fee.");
                 }
             }
 
@@ -104,6 +104,11 @@ namespace DentistAPI.Services
             if (discount > 0)
             {
                 finalPrice = Math.Max(0, finalPrice - discount);
+            }
+
+            if (finalPrice <= 0)
+            {
+                throw new InvalidOperationException("Final procedure fee after discount must be greater than zero.");
             }
 
             string status = !string.IsNullOrWhiteSpace(request.Status) ? request.Status : "proposed";
@@ -177,22 +182,22 @@ namespace DentistAPI.Services
 
             if (string.Equals(view, "invoices", StringComparison.OrdinalIgnoreCase))
             {
-                // Invoices tab shows: completed items OR any items that received payments (prepaid/in progress)
+                // Invoices/billing tab shows all active and completed items (everything billable, excluding cancelled/declined)
                 sql = @"
                     SELECT ti.*, appt.PreferredDate AS ScheduledDate
                     FROM [dentist].[TreatmentItems] ti
                     LEFT JOIN [dentist].[Appointments] appt ON ti.AppointmentID = appt.AppointmentID
                     WHERE ti.PatientID = @PatientId
-                      AND (
-                            ti.Status = 'completed'
-                            OR ti.TreatmentItemID IN (
-                                SELECT pa.treatment_item_id 
-                                FROM [dentist].[payment_allocations] pa
-                                JOIN [dentist].[Payments] p ON pa.payment_id = p.PaymentID
-                                WHERE p.Status = 'active'
-                            )
-                      )
-                    ORDER BY ti.CompletedAt DESC, ti.UpdatedAt DESC";
+                      AND ti.Status NOT IN ('cancelled', 'declined')
+                    ORDER BY 
+                        CASE ti.Status 
+                            WHEN 'completed' THEN 1 
+                            WHEN 'in_progress' THEN 2 
+                            WHEN 'accepted' THEN 3 
+                            WHEN 'proposed' THEN 4 
+                            ELSE 5 
+                        END, 
+                        ti.CompletedAt DESC, ti.UpdatedAt DESC";
             }
             else
             {
@@ -352,6 +357,11 @@ namespace DentistAPI.Services
             // Price change permissions: doctor or admin only, with reason
             if (request.FinalPrice.HasValue && request.FinalPrice.Value != current.FinalPrice)
             {
+                if (request.FinalPrice.Value <= 0)
+                {
+                    throw new InvalidOperationException("Procedure fee must be greater than zero. Zero or negative fee is not allowed.");
+                }
+
                 if (string.Equals(request.UserRole, "Receptionist", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new UnauthorizedAccessException("Receptionists cannot modify treatment prices. Only Doctors or Admins can adjust fees.");
@@ -364,7 +374,54 @@ namespace DentistAPI.Services
             int? completedBy = current.CompletedBy;
 
             if (newStatus == "accepted" && acceptedAt == null) acceptedAt = DateTime.UtcNow;
-            if (newStatus == "in_progress" && startedAt == null) startedAt = DateTime.UtcNow;
+            if (newStatus == "in_progress")
+            {
+                if (startedAt == null) startedAt = DateTime.UtcNow;
+
+                // CLINICAL RULE: Single active treatment per tooth in a single appointment/session
+                if (current.ToothNumber > 0)
+                {
+                    var activeOther = await conn.QueryFirstOrDefaultAsync<TreatmentItem>(@"
+                        SELECT TOP 1 * FROM [dentist].[TreatmentItems]
+                        WHERE PatientID = @PatientId
+                          AND ToothNumber = @ToothNumber
+                          AND Status = 'in_progress'
+                          AND TreatmentItemID <> @Id",
+                        new { PatientId = current.PatientID, ToothNumber = current.ToothNumber, Id = itemId });
+
+                    if (activeOther != null)
+                    {
+                        string? transitionNote = !string.IsNullOrWhiteSpace(request.TransitionNotes) 
+                            ? request.TransitionNotes 
+                            : request.ClosedReason;
+
+                        if (!string.IsNullOrWhiteSpace(transitionNote))
+                        {
+                            // Stop previous treatment on this tooth with mandatory clinical transition note
+                            await conn.ExecuteAsync(@"
+                                UPDATE [dentist].[TreatmentItems]
+                                SET Status = 'completed',
+                                    ClosedReason = @Reason,
+                                    CompletedAt = SYSUTCDATETIME(),
+                                    UpdatedAt = SYSUTCDATETIME()
+                                WHERE TreatmentItemID = @OtherId",
+                                new 
+                                { 
+                                    Reason = $"Stopped for next treatment '{current.ProcedureName}': {transitionNote}", 
+                                    OtherId = activeOther.TreatmentItemID 
+                                });
+                        }
+                        else
+                        {
+                            throw new InvalidOperationException(
+                                $"Active treatment '{activeOther.ProcedureName}' is already in progress on Tooth #{current.ToothNumber}. " +
+                                $"Only one treatment at a time can be implemented on a tooth in a single appointment. " +
+                                $"Please stop the current treatment and provide clinical notes explaining why the next treatment is being started.");
+                        }
+                    }
+                }
+            }
+
             if (newStatus == "completed")
             {
                 completedAt = DateTime.UtcNow;
@@ -380,6 +437,7 @@ namespace DentistAPI.Services
                     Fee = @FinalPrice,
                     PriceNote = COALESCE(@PriceNote, PriceNote),
                     ClosedReason = COALESCE(@ClosedReason, ClosedReason),
+                    TransitionNotes = COALESCE(@TransitionNotes, TransitionNotes),
                     StartedAt = @StartedAt,
                     AcceptedAt = @AcceptedAt,
                     CompletedAt = @CompletedAt,
@@ -394,11 +452,21 @@ namespace DentistAPI.Services
                 FinalPrice = finalPrice,
                 request.PriceNote,
                 request.ClosedReason,
+                request.TransitionNotes,
                 StartedAt = startedAt,
                 AcceptedAt = acceptedAt,
                 CompletedAt = completedAt,
                 CompletedBy = completedBy
             });
+
+            // If procedure is cancelled or declined, automatically release its allocations back to unallocated patient credit pool
+            if (string.Equals(newStatus, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(newStatus, "declined", StringComparison.OrdinalIgnoreCase))
+            {
+                await conn.ExecuteAsync(@"
+                    DELETE FROM [dentist].[payment_allocations]
+                    WHERE treatment_item_id = @Id", new { Id = itemId });
+            }
 
             // Write Audit Log
             try
@@ -468,6 +536,11 @@ namespace DentistAPI.Services
                 return (false, "Payment amount must be greater than zero.", "");
             }
 
+            if (request.Amount > 20000000)
+            {
+                return (false, "Payment amount exceeds the maximum permissible transaction limit (Rs 20,000,000).", "");
+            }
+
             using var conn = CreateConnection();
             await conn.OpenAsync();
             using var tx = conn.BeginTransaction();
@@ -475,7 +548,7 @@ namespace DentistAPI.Services
             try
             {
                 // Validate allocation amounts
-                int totalAllocated = request.Allocations?.Sum(a => a.Amount) ?? 0;
+                long totalAllocated = request.Allocations?.Sum(a => a.Amount) ?? 0;
                 if (totalAllocated > request.Amount)
                 {
                     tx.Rollback();
@@ -534,7 +607,15 @@ namespace DentistAPI.Services
                             new { Id = alloc.TreatmentItemId }, tx);
 
                         int remainingBalance = Math.Max(0, price - alreadyPaid);
-                        int allocAmount = Math.Min(alloc.Amount, remainingBalance);
+
+                        // FINANCIAL INTEGRITY RULE: Payment cannot exceed procedure balance due
+                        if (alloc.Amount > remainingBalance)
+                        {
+                            tx.Rollback();
+                            return (false, $"Amount (Rs {alloc.Amount:N0}) cannot be greater than balance due (Rs {remainingBalance:N0}) for {item.ProcedureName ?? item.Name}.", "");
+                        }
+
+                        int allocAmount = (int)alloc.Amount;
 
                         if (allocAmount > 0)
                         {
@@ -610,7 +691,7 @@ namespace DentistAPI.Services
                     new { request.PatientId }, tx);
 
                 int availableCredit = Math.Max(0, totalPaid - totalAllocated);
-                int requestSum = request.Allocations.Sum(a => a.Amount);
+                int requestSum = (int)request.Allocations.Sum(a => a.Amount);
 
                 if (requestSum > availableCredit)
                 {
@@ -631,7 +712,7 @@ namespace DentistAPI.Services
 
                 foreach (var alloc in request.Allocations.Where(a => a.Amount > 0))
                 {
-                    int needed = alloc.Amount;
+                    int needed = (int)alloc.Amount;
 
                     foreach (var pay in payments)
                     {
@@ -671,13 +752,16 @@ namespace DentistAPI.Services
         }
 
         // =========================================================================
-        // 7. VOID PAYMENT (Admin only, mandatory reason, reverses allocations)
+        // 7. VOID PAYMENT (Clinicians & Admins, mandatory reason, reverses allocations)
         // =========================================================================
         public async Task<(bool Success, string Message)> VoidPaymentAsync(VoidPaymentRequest request)
         {
-            if (!string.Equals(request.UserRole, "Admin", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(request.UserRole, "Admin", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(request.UserRole, "SuperAdmin", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(request.UserRole, "Doctor", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(request.UserRole, "Dentist", StringComparison.OrdinalIgnoreCase))
             {
-                return (false, "Permission denied: Only clinic Administrators can void or refund payments.");
+                return (false, "Permission denied: Only clinicians or administrators can void or refund payments.");
             }
 
             if (string.IsNullOrWhiteSpace(request.Reason))
@@ -700,7 +784,8 @@ namespace DentistAPI.Services
                     return (false, "Payment record not found.");
                 }
 
-                if (string.Equals((string)payment.Status, "voided", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals((string)payment.Status, "voided", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals((string)payment.PaymentStatus, "Voided", StringComparison.OrdinalIgnoreCase))
                 {
                     tx.Rollback();
                     return (false, "This payment is already voided.");
@@ -725,8 +810,8 @@ namespace DentistAPI.Services
                 // Audit log
                 await conn.ExecuteAsync(@"
                     INSERT INTO [dentist].[AuditLogs] (Entity, EntityID, Action, NewValue, UserID, UserRole, CreatedAt)
-                    VALUES ('Payment', @Id, 'void_payment', @Reason, @UserId, 'Admin', SYSUTCDATETIME())",
-                    new { Id = request.PaymentId, request.Reason, request.UserId }, tx);
+                    VALUES ('Payment', @Id, 'void_payment', @Reason, @UserId, @Role, SYSUTCDATETIME())",
+                    new { Id = request.PaymentId, request.Reason, request.UserId, Role = request.UserRole ?? "Doctor" }, tx);
 
                 tx.Commit();
                 return (true, $"Payment #{payment.PaymentReceiptNo} voided successfully. Allocations reversed.");
@@ -737,6 +822,50 @@ namespace DentistAPI.Services
                 _logger.LogError(ex, "Error voiding payment #{PaymentId}", request.PaymentId);
                 return (false, "Failed to void payment: " + ex.Message);
             }
+        }
+
+        // =========================================================================
+        // 7B. PATIENT PAYMENTS HISTORY LIST
+        // =========================================================================
+        public async Task<List<PaymentDetailDto>> GetPatientPaymentsAsync(int patientId)
+        {
+            using var conn = CreateConnection();
+            string sql = @"
+                SELECT 
+                    p.PaymentID,
+                    p.PaymentReceiptNo AS ReceiptNo,
+                    p.PatientID,
+                    CAST(p.Amount AS INT) AS Amount,
+                    p.PaymentMethod AS Method,
+                    p.PaymentDate,
+                    COALESCE(p.Status, 'active') AS Status,
+                    p.PaymentStatus,
+                    p.VoidReason,
+                    p.VoidedAt,
+                    COALESCE(u.FirstName + ' ' + u.LastName, 'Front Desk') AS ReceivedByName,
+                    COALESCE((SELECT SUM(pa.amount) FROM [dentist].[payment_allocations] pa WHERE pa.payment_id = p.PaymentID), 0) AS AllocatedAmount
+                FROM [dentist].[Payments] p
+                LEFT JOIN [dentist].[Doctors] u ON p.ReceivedBy = u.DoctorID
+                WHERE p.PatientID = @PatientId
+                ORDER BY p.PaymentDate DESC";
+
+            var rows = (await conn.QueryAsync<dynamic>(sql, new { PatientId = patientId })).ToList();
+            return rows.Select(r => new PaymentDetailDto
+            {
+                PaymentID = (long)r.PaymentID,
+                ReceiptNo = (string)(r.ReceiptNo ?? ""),
+                PatientID = (int)r.PatientID,
+                Amount = (int)r.Amount,
+                Method = (string)(r.Method ?? "cash"),
+                PaymentDate = (DateTime)r.PaymentDate,
+                Status = (string)(r.Status ?? "active"),
+                PaymentStatus = (string)(r.PaymentStatus ?? ""),
+                VoidReason = (string?)r.VoidReason,
+                VoidedAt = (DateTime?)r.VoidedAt,
+                ReceivedByName = (string)(r.ReceivedByName ?? "Front Desk"),
+                AllocatedAmount = (int)r.AllocatedAmount,
+                UnallocatedAmount = Math.Max(0, (int)r.Amount - (int)r.AllocatedAmount)
+            }).ToList();
         }
 
         // =========================================================================
@@ -753,18 +882,20 @@ namespace DentistAPI.Services
                 WHERE PatientID = @PatientId AND Status = 'completed'",
                 new { PatientId = patientId });
 
-            // Planned value (not yet completed)
+            // Planned value (active chairside work not yet completed)
             int plannedValue = await conn.ExecuteScalarAsync<int>(@"
                 SELECT COALESCE(SUM(COALESCE(FinalPrice, CAST(Fee AS INT))), 0)
                 FROM [dentist].[TreatmentItems]
                 WHERE PatientID = @PatientId AND Status IN ('proposed', 'accepted', 'in_progress')",
                 new { PatientId = patientId });
 
-            // Total paid (active payments)
+            // Total paid (active non-voided payments)
             int totalPaid = await conn.ExecuteScalarAsync<int>(@"
                 SELECT COALESCE(SUM(CAST(Amount AS INT)), 0)
                 FROM [dentist].[Payments]
-                WHERE PatientID = @PatientId AND Status = 'active'",
+                WHERE PatientID = @PatientId 
+                  AND LOWER(ISNULL(Status, '')) NOT IN ('voided', 'deleted', 'cancelled', 'refunded')
+                  AND LOWER(ISNULL(PaymentStatus, '')) NOT IN ('voided', 'deleted', 'cancelled', 'refunded')",
                 new { PatientId = patientId });
 
             // Allocations to completed items
@@ -773,16 +904,22 @@ namespace DentistAPI.Services
                 FROM [dentist].[payment_allocations] pa
                 JOIN [dentist].[Payments] p ON pa.payment_id = p.PaymentID
                 JOIN [dentist].[TreatmentItems] ti ON pa.treatment_item_id = ti.TreatmentItemID
-                WHERE p.PatientID = @PatientId AND p.Status = 'active' AND ti.Status = 'completed'",
+                WHERE p.PatientID = @PatientId 
+                  AND LOWER(ISNULL(p.Status, '')) NOT IN ('voided', 'deleted', 'cancelled', 'refunded')
+                  AND LOWER(ISNULL(p.PaymentStatus, '')) NOT IN ('voided', 'deleted', 'cancelled', 'refunded')
+                  AND ti.Status = 'completed'",
                 new { PatientId = patientId });
 
-            // Allocations to non-completed items
+            // Allocations to active non-completed items (strictly excludes cancelled, declined, or deleted items)
             int allocatedToIncomplete = await conn.ExecuteScalarAsync<int>(@"
                 SELECT COALESCE(SUM(pa.amount), 0)
                 FROM [dentist].[payment_allocations] pa
                 JOIN [dentist].[Payments] p ON pa.payment_id = p.PaymentID
                 JOIN [dentist].[TreatmentItems] ti ON pa.treatment_item_id = ti.TreatmentItemID
-                WHERE p.PatientID = @PatientId AND p.Status = 'active' AND ti.Status <> 'completed'",
+                WHERE p.PatientID = @PatientId 
+                  AND LOWER(ISNULL(p.Status, '')) NOT IN ('voided', 'deleted', 'cancelled', 'refunded')
+                  AND LOWER(ISNULL(p.PaymentStatus, '')) NOT IN ('voided', 'deleted', 'cancelled', 'refunded')
+                  AND ti.Status IN ('proposed', 'accepted', 'in_progress')",
                 new { PatientId = patientId });
 
             int totalAllocated = allocatedToCompleted + allocatedToIncomplete;

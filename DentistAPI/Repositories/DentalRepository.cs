@@ -3613,6 +3613,11 @@ namespace DentistAPI.Repositories
                     }
                 }
 
+                if (fee <= 0)
+                {
+                    fee = 14000.00m;
+                }
+
                 string procName = !string.IsNullOrEmpty(obs.ProcedureName) ? obs.ProcedureName : "Dental Procedure";
                 string toothKey = !string.IsNullOrEmpty(obs.ToothKey) ? obs.ToothKey : obs.ToothNumber.ToString();
 

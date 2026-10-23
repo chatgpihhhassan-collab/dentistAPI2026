@@ -751,6 +751,134 @@ namespace DentistAPI.Controllers
                 appointment = updatedAppt
             });
         }
+
+        // ==========================================
+        // 6. RECORD TREATMENT SESSION TIMER
+        // ==========================================
+        [HttpPost("{id}/record-treatment-time")]
+        [HttpPost("record-treatment-time")]
+        public async Task<IActionResult> RecordAppointmentTreatmentTime(int id, [FromBody] RecordTreatmentTimeRequest request)
+        {
+            int apptId = id > 0 ? id : (request?.AppointmentId ?? 0);
+            int durationSecs = request?.DurationSeconds ?? 0;
+            string formatted = !string.IsNullOrWhiteSpace(request?.DurationFormatted) 
+                ? request.DurationFormatted 
+                : $"{durationSecs / 60}m {durationSecs % 60}s";
+            DateTime ended = request?.EndedAt ?? DateTime.UtcNow;
+            DateTime started = request?.StartedAt ?? ended.AddSeconds(-durationSecs);
+            int patientId = request?.PatientId ?? 0;
+            int doctorId = request?.DoctorId ?? 1;
+
+            try
+            {
+                using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                // If apptId was not passed, locate the patient's active/today or most recent appointment
+                if (apptId <= 0 && patientId > 0)
+                {
+                    apptId = await conn.QueryFirstOrDefaultAsync<int>(@"
+                        SELECT TOP 1 AppointmentID 
+                        FROM [dentist].[Appointments] 
+                        WHERE PatientID = @PatientId 
+                        ORDER BY 
+                            CASE WHEN CAST(PreferredDate AS DATE) = CAST(GETDATE() AS DATE) THEN 0 ELSE 1 END,
+                            PreferredDate DESC",
+                        new { PatientId = patientId });
+                }
+
+                if (apptId > 0)
+                {
+                    var appt = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                        "SELECT AppointmentID, PatientID, DoctorID, Notes, TreatmentDurationSeconds FROM [dentist].[Appointments] WHERE AppointmentID = @Id",
+                        new { Id = apptId });
+
+                    if (appt != null)
+                    {
+                        if (patientId <= 0 && appt.PatientID != null) patientId = (int)appt.PatientID;
+                        if (doctorId <= 1 && appt.DoctorID != null) doctorId = (int)appt.DoctorID;
+
+                        int accumulatedSeconds = ((int)(appt.TreatmentDurationSeconds ?? 0)) + durationSecs;
+                        string timerNote = $"[Treatment Session: {formatted} ({durationSecs}s) on {DateTime.UtcNow:yyyy-MM-dd HH:mm}]";
+                        string existingNotes = (string)appt.Notes ?? string.Empty;
+                        string updatedNotes = string.IsNullOrWhiteSpace(existingNotes) 
+                            ? timerNote 
+                            : $"{existingNotes}\n{timerNote}";
+
+                        await conn.ExecuteAsync(@"
+                            UPDATE [dentist].[Appointments]
+                            SET TreatmentDurationSeconds = @Accumulated,
+                                TreatmentDurationFormatted = @Formatted,
+                                TreatmentStartedAt = COALESCE(TreatmentStartedAt, @Started),
+                                TreatmentEndedAt = @Ended,
+                                Notes = @Notes
+                            WHERE AppointmentID = @Id",
+                            new 
+                            { 
+                                Accumulated = accumulatedSeconds, 
+                                Formatted = formatted, 
+                                Started = started, 
+                                Ended = ended, 
+                                Notes = updatedNotes, 
+                                Id = apptId 
+                            });
+
+                        // Audit Log
+                        await conn.ExecuteAsync(@"
+                            INSERT INTO [dentist].[AuditLogs] (Entity, EntityID, Action, OldValue, NewValue, UserID, UserRole, CreatedAt)
+                            VALUES ('Appointment', @Id, 'treatment_time_recorded', CAST(@OldVal AS NVARCHAR(MAX)), CAST(@NewVal AS NVARCHAR(MAX)), @UserId, 'Doctor', SYSUTCDATETIME())",
+                            new
+                            {
+                                Id = apptId,
+                                OldVal = (int)(appt.TreatmentDurationSeconds ?? 0),
+                                NewVal = accumulatedSeconds,
+                                UserId = doctorId
+                            }).ConfigureAwait(false);
+                    }
+                }
+
+                // Clinical Log for Patient
+                if (patientId > 0)
+                {
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO [dentist].[ClinicalLogs] (PatientID, DoctorID, Action, Message, CreatedAt)
+                        VALUES (@PatientId, @DoctorId, 'TREATMENT_TIMER_RECORDED', @Message, SYSUTCDATETIME())",
+                        new
+                        {
+                            PatientId = patientId,
+                            DoctorId = doctorId,
+                            Message = $"Treatment session recorded. Duration: {formatted} ({durationSecs}s) for Patient #{patientId}, Appointment #{(apptId > 0 ? apptId.ToString() : "N/A")}."
+                        }).ConfigureAwait(false);
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    appointmentId = apptId > 0 ? apptId : (int?)null,
+                    patientId = patientId,
+                    durationSeconds = durationSecs,
+                    durationFormatted = formatted,
+                    message = $"Treatment duration of {formatted} appended successfully for Patient #{patientId}{(apptId > 0 ? $" (Appointment #{apptId})" : "")}."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error recording treatment time for Appointment #{ApptId}, Patient #{PatientId}", apptId, patientId);
+                return StatusCode(500, new { message = "Failed to record treatment time: " + ex.Message });
+            }
+        }
+    }
+
+    public class RecordTreatmentTimeRequest
+    {
+        public int? AppointmentId { get; set; }
+        public int PatientId { get; set; }
+        public int? DoctorId { get; set; }
+        public int DurationSeconds { get; set; }
+        public string? DurationFormatted { get; set; }
+        public DateTime? StartedAt { get; set; }
+        public DateTime? EndedAt { get; set; }
+        public string? Notes { get; set; }
     }
 }
 

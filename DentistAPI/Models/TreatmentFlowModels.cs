@@ -131,6 +131,23 @@ namespace DentistAPI.Models
         public string? Notes { get; set; }
     }
 
+    public class PaymentDetailDto
+    {
+        public long PaymentID { get; set; }
+        public string ReceiptNo { get; set; } = string.Empty;
+        public int PatientID { get; set; }
+        public int Amount { get; set; }
+        public string Method { get; set; } = "cash";
+        public DateTime PaymentDate { get; set; }
+        public string Status { get; set; } = "active";
+        public string? PaymentStatus { get; set; }
+        public string? VoidReason { get; set; }
+        public DateTime? VoidedAt { get; set; }
+        public string ReceivedByName { get; set; } = "Front Desk";
+        public int AllocatedAmount { get; set; }
+        public int UnallocatedAmount { get; set; }
+    }
+
     public class TreatmentCatalogItem
     {
         public int ID { get; set; }
@@ -170,6 +187,7 @@ namespace DentistAPI.Models
         public int? FinalPrice { get; set; }
         public string? PriceNote { get; set; }
         public string? ClosedReason { get; set; }
+        public string? TransitionNotes { get; set; }
         public int UserId { get; set; } = 1;
         public string UserRole { get; set; } = "Doctor"; // Doctor, Receptionist, Admin
     }
@@ -177,7 +195,7 @@ namespace DentistAPI.Models
     public class RecordFlexiblePaymentRequest
     {
         public int PatientId { get; set; }
-        public int Amount { get; set; }
+        public long Amount { get; set; }
         public string Method { get; set; } = "cash"; // cash, card, bank, easypaisa, jazzcash
         public int? AppointmentId { get; set; }
         public long? VisitId { get; set; }
@@ -189,7 +207,7 @@ namespace DentistAPI.Models
     public class PaymentAllocationRequestItem
     {
         public long TreatmentItemId { get; set; }
-        public int Amount { get; set; }
+        public long Amount { get; set; }
     }
 
     public class AllocateCreditRequest
