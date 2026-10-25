@@ -837,7 +837,7 @@ namespace DentistAPI.Controllers
                     }
                 }
 
-                // Clinical Log for Patient
+                // Clinical Log & Treatment Session for Patient
                 if (patientId > 0)
                 {
                     await conn.ExecuteAsync(@"
@@ -849,6 +849,31 @@ namespace DentistAPI.Controllers
                             DoctorId = doctorId,
                             Message = $"Treatment session recorded. Duration: {formatted} ({durationSecs}s) for Patient #{patientId}, Appointment #{(apptId > 0 ? apptId.ToString() : "N/A")}."
                         }).ConfigureAwait(false);
+
+                    // Ensure TreatmentSessions table also holds this session record
+                    try
+                    {
+                        await conn.ExecuteAsync(@"
+                            IF OBJECT_ID('dentist.TreatmentSessions', 'U') IS NOT NULL
+                            BEGIN
+                                INSERT INTO [dentist].[TreatmentSessions]
+                                (PatientID, DoctorID, AppointmentID, StartedAt, EndedAt, DurationSeconds, FormattedDuration, Status, ActionCount, SummaryNotes, CreatedAt, UpdatedAt)
+                                VALUES
+                                (@PatientId, @DoctorId, @ApptId, @Started, @Ended, @Duration, @Formatted, 'completed', 1, @Notes, SYSUTCDATETIME(), SYSUTCDATETIME());
+                            END",
+                            new
+                            {
+                                PatientId = patientId,
+                                DoctorId = doctorId,
+                                ApptId = apptId > 0 ? (int?)apptId : null,
+                                Started = started,
+                                Ended = ended,
+                                Duration = durationSecs,
+                                Formatted = formatted,
+                                Notes = $"Treatment session recorded ({formatted}) on Odontogram"
+                            }).ConfigureAwait(false);
+                    }
+                    catch { }
                 }
 
                 return Ok(new

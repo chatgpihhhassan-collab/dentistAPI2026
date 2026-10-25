@@ -439,6 +439,7 @@ namespace DentistAPI.Models
         public int? ToothNumber { get; set; }
         public int? DoctorId { get; set; }
         public string? SourceRef { get; set; }
+        public string? Notes { get; set; }
     }
 
     public class AutoDiagnosticFeeResult
