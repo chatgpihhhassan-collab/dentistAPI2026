@@ -451,4 +451,41 @@ namespace DentistAPI.Models
         public long? ItemId { get; set; }
         public string? Message { get; set; }
     }
+
+    public class PatientModalitySyncResult
+    {
+        public int PatientId { get; set; }
+        public string? CurrentTreatmentPlan { get; set; }
+        public string? TreatmentStage { get; set; }
+        public string? TargetShade { get; set; }
+        public bool ModalityReset { get; set; }
+        public int ActiveItemsCount { get; set; }
+        public string? Message { get; set; }
+    }
+
+    public class PatientModalitiesStatusDto
+    {
+        public int PatientId { get; set; }
+        public string? CurrentTreatmentPlan { get; set; }
+        public string? TreatmentStage { get; set; }
+        public string? TargetShade { get; set; }
+        public ModalityDetailDto Braces { get; set; } = new();
+        public ModalityDetailDto Whitening { get; set; } = new();
+        public ModalityDetailDto Cavity { get; set; } = new();
+    }
+
+    public class ModalityDetailDto
+    {
+        public bool Active { get; set; }
+        public string Status { get; set; } = "none"; // "active", "in_progress", "planned", "completed", "none"
+        public string Title { get; set; } = string.Empty;
+        public string? Stage { get; set; }
+        public string? Specification { get; set; } // Wire or Shade or Material
+        public int PlannedCount { get; set; }
+        public List<string> AffectedTeeth { get; set; } = new();
+        public long? TreatmentItemId { get; set; }
+        public int? TotalFee { get; set; }
+        public int? PaidAmount { get; set; }
+    }
 }
+

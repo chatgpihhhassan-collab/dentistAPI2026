@@ -625,5 +625,84 @@ namespace DentistAPI.Controllers
         {
             return await GetAccountSummary(id);
         }
+
+        // ==========================================
+        // DELETE TREATMENT ITEM (Permanent Removal & Modality Auto-Reset)
+        // ==========================================
+        [HttpDelete("treatment-items/{id:long}")]
+        public async Task<IActionResult> DeleteTreatmentItem(long id, [FromQuery] int? userId, [FromQuery] string? userRole)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid treatment item ID is required." });
+
+            try
+            {
+                var (success, message, syncStatus) = await _treatmentPlanService.DeleteTreatmentItemAsync(id, userId, userRole);
+                if (!success) return NotFound(new { message });
+
+                return Ok(new
+                {
+                    success = true,
+                    deletedItemId = id,
+                    patientId = syncStatus.PatientId,
+                    currentTreatmentPlan = syncStatus.CurrentTreatmentPlan,
+                    treatmentStage = syncStatus.TreatmentStage,
+                    targetShade = syncStatus.TargetShade,
+                    modalityReset = syncStatus.ModalityReset,
+                    message
+                });
+            }
+            catch (UnauthorizedAccessException uex)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = uex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting treatment item #{ItemId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpDelete("patients/{patientId:int}/treatment-items/{id:long}")]
+        public async Task<IActionResult> DeletePatientTreatmentItem(int patientId, long id, [FromQuery] int? userId, [FromQuery] string? userRole)
+        {
+            return await DeleteTreatmentItem(id, userId, userRole);
+        }
+
+        // ==========================================
+        // TRIPARTITE MODALITIES REAL-TIME STATUS (Braces / Whitening / Cavity)
+        // ==========================================
+        [HttpGet("patients/{id:int}/modalities-status")]
+        public async Task<IActionResult> GetPatientModalitiesStatus(int id)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+
+            try
+            {
+                var status = await _treatmentPlanService.GetPatientModalitiesStatusAsync(id);
+                return Ok(status);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving modalities status for patient #{PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("patients/{id:int}/sync-modality")]
+        public async Task<IActionResult> SyncPatientModality(int id)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+
+            try
+            {
+                var result = await _treatmentPlanService.SyncPatientModalityFromItemsAsync(id);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error synchronizing modality for patient #{PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
     }
 }

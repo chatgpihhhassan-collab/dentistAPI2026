@@ -29,6 +29,9 @@ namespace DentistAPI.Services
         Task<int> SyncDirectoryModalitiesAsync(int patientId, int doctorId);
         Task<List<TreatmentCatalogItem>> GetCatalogAsync();
         Task<AutoDiagnosticFeeResult> EnsureDiagnosticFeeAsync(int patientId, AutoDiagnosticFeeRequest request);
+        Task<(bool Success, string Message, PatientModalitySyncResult ModalityStatus)> DeleteTreatmentItemAsync(long itemId, int? userId = null, string? userRole = null);
+        Task<PatientModalitySyncResult> SyncPatientModalityFromItemsAsync(int patientId);
+        Task<PatientModalitiesStatusDto> GetPatientModalitiesStatusAsync(int patientId);
     }
 
     public class TreatmentPlanService : ITreatmentPlanService
@@ -473,6 +476,14 @@ namespace DentistAPI.Services
             catch (Exception auditEx)
             {
                 _logger.LogWarning(auditEx, "AuditLog writing failed during status transition for TreatmentItem #{ItemId}", itemId);
+            }
+
+            // Synchronize Patient Modality if status changed to cancelled, declined, or completed
+            if (string.Equals(newStatus, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(newStatus, "declined", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(newStatus, "completed", StringComparison.OrdinalIgnoreCase))
+            {
+                await SyncPatientModalityFromItemsInternalAsync(current.PatientID, conn);
             }
 
             return rows > 0;
@@ -1067,46 +1078,68 @@ namespace DentistAPI.Services
             if (patient == null || string.IsNullOrWhiteSpace(patient.CurrentTreatmentPlan)) return 0;
 
             string plan = patient.CurrentTreatmentPlan.ToLowerInvariant();
+            if (plan.Contains("general consultation") || plan == "null" || plan == "none") return 0;
+
+            // Check if active items already exist for this patient to prevent redundant additions
+            var existingItems = (await conn.QueryAsync<TreatmentItem>(@"
+                SELECT * FROM [dentist].[TreatmentItems] 
+                WHERE PatientID = @Id AND Status NOT IN ('cancelled', 'declined')",
+                new { Id = patientId })).ToList();
+
             int syncedCount = 0;
 
             if (plan.Contains("whiten"))
             {
-                await CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                bool alreadyHasWhitening = existingItems.Any(i =>
+                    string.Equals(i.Category, "whitening", StringComparison.OrdinalIgnoreCase) ||
+                    (i.ProcedureName ?? "").IndexOf("whiten", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                if (!alreadyHasWhitening)
                 {
-                    PatientId = patientId,
-                    DoctorId = doctorId,
-                    Name = "Teeth Whitening (Cosmetic Laser)",
-                    Category = "whitening",
-                    ProcedureCode = "D9972",
-                    ToothNo = 0,
-                    Source = "directory",
-                    SourceRef = patient.TreatmentStage,
-                    EstimatedPrice = 25000,
-                    FinalPrice = 25000,
-                    PlannedVisits = 3,
-                    Status = "accepted"
-                });
-                syncedCount++;
+                    await CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                    {
+                        PatientId = patientId,
+                        DoctorId = doctorId,
+                        Name = "Teeth Whitening (Cosmetic Laser)",
+                        Category = "whitening",
+                        ProcedureCode = "D9972",
+                        ToothNo = 0,
+                        Source = "directory",
+                        SourceRef = patient.TreatmentStage,
+                        EstimatedPrice = 25000,
+                        FinalPrice = 25000,
+                        PlannedVisits = 3,
+                        Status = "accepted"
+                    });
+                    syncedCount++;
+                }
             }
 
             if (plan.Contains("brace") || plan.Contains("ortho"))
             {
-                await CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                bool alreadyHasOrtho = existingItems.Any(i =>
+                    string.Equals(i.Category, "ortho", StringComparison.OrdinalIgnoreCase) ||
+                    (i.ProcedureName ?? "").IndexOf("brace", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                if (!alreadyHasOrtho)
                 {
-                    PatientId = patientId,
-                    DoctorId = doctorId,
-                    Name = "Braces (Orthodontics Full Arch)",
-                    Category = "ortho",
-                    ProcedureCode = "D8080",
-                    ToothNo = 0,
-                    Source = "directory",
-                    SourceRef = patient.TreatmentStage,
-                    EstimatedPrice = 120000,
-                    FinalPrice = 120000,
-                    PlannedVisits = 12,
-                    Status = "accepted"
-                });
-                syncedCount++;
+                    await CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                    {
+                        PatientId = patientId,
+                        DoctorId = doctorId,
+                        Name = "Braces (Orthodontics Full Arch)",
+                        Category = "ortho",
+                        ProcedureCode = "D8080",
+                        ToothNo = 0,
+                        Source = "directory",
+                        SourceRef = patient.TreatmentStage,
+                        EstimatedPrice = 120000,
+                        FinalPrice = 120000,
+                        PlannedVisits = 12,
+                        Status = "accepted"
+                    });
+                    syncedCount++;
+                }
             }
 
             if (plan.Contains("cavity") || plan.Contains("restorative"))
@@ -1119,25 +1152,392 @@ namespace DentistAPI.Services
                     toothNo = parsedTooth;
                 }
 
-                await CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                bool alreadyHasCavity = existingItems.Any(i =>
+                    (string.Equals(i.Category, "restorative", StringComparison.OrdinalIgnoreCase) ||
+                     (i.ProcedureName ?? "").IndexOf("cavity", StringComparison.OrdinalIgnoreCase) >= 0) &&
+                    (toothNo == 0 || i.ToothNumber == toothNo));
+
+                if (!alreadyHasCavity)
                 {
-                    PatientId = patientId,
-                    DoctorId = doctorId,
-                    Name = toothNo > 0 ? $"Composite Resin Restoration (Tooth #{toothNo})" : "Composite Resin Restoration",
-                    Category = "restorative",
-                    ProcedureCode = "D2391",
-                    ToothNo = toothNo,
-                    Source = "directory",
-                    SourceRef = stage,
-                    EstimatedPrice = 12000,
-                    FinalPrice = 12000,
-                    PlannedVisits = 1,
-                    Status = "accepted"
-                });
-                syncedCount++;
+                    await CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                    {
+                        PatientId = patientId,
+                        DoctorId = doctorId,
+                        Name = toothNo > 0 ? $"Composite Resin Restoration (Tooth #{toothNo})" : "Composite Resin Restoration",
+                        Category = "restorative",
+                        ProcedureCode = "D2391",
+                        ToothNo = toothNo,
+                        Source = "directory",
+                        SourceRef = stage,
+                        EstimatedPrice = 12000,
+                        FinalPrice = 12000,
+                        PlannedVisits = 1,
+                        Status = "accepted"
+                    });
+                    syncedCount++;
+                }
             }
 
             return syncedCount;
+        }
+
+        // =========================================================================
+        // 11B. DELETE TREATMENT ITEM & MODALITY AUTO-RESET
+        // =========================================================================
+        public async Task<(bool Success, string Message, PatientModalitySyncResult ModalityStatus)> DeleteTreatmentItemAsync(long itemId, int? userId = null, string? userRole = null)
+        {
+            using var conn = CreateConnection();
+            await conn.OpenAsync();
+
+            var item = await conn.QueryFirstOrDefaultAsync<TreatmentItem>(
+                "SELECT * FROM [dentist].[TreatmentItems] WHERE TreatmentItemID = @Id", new { Id = itemId });
+            if (item == null)
+            {
+                return (false, $"Treatment item #{itemId} not found.", new PatientModalitySyncResult { PatientId = 0 });
+            }
+
+            // Role check: receptionists cannot delete active items
+            if (string.Equals(userRole, "Receptionist", StringComparison.OrdinalIgnoreCase) && 
+                (item.Status == "in_progress" || item.Status == "completed"))
+            {
+                throw new UnauthorizedAccessException("Receptionists cannot delete clinical treatments that are in progress or completed.");
+            }
+
+            using var tx = conn.BeginTransaction();
+            try
+            {
+                // 1. Delete linked appointments
+                await conn.ExecuteAsync(
+                    "DELETE FROM [dentist].[treatment_item_appointments] WHERE treatment_item_id = @Id", 
+                    new { Id = itemId }, tx);
+
+                // 2. Delete payment allocations
+                await conn.ExecuteAsync(
+                    "DELETE FROM [dentist].[payment_allocations] WHERE treatment_item_id = @Id", 
+                    new { Id = itemId }, tx);
+
+                // 3. Delete treatment item
+                await conn.ExecuteAsync(
+                    "DELETE FROM [dentist].[TreatmentItems] WHERE TreatmentItemID = @Id", 
+                    new { Id = itemId }, tx);
+
+                // 4. Audit log
+                try
+                {
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO [dentist].[AuditLogs] (Entity, EntityID, Action, OldValue, NewValue, UserID, UserRole, CreatedAt)
+                        VALUES ('TreatmentItem', @Id, 'deleted', @OldValue, 'deleted', @UserId, @UserRole, SYSUTCDATETIME())",
+                        new 
+                        { 
+                            Id = itemId, 
+                            OldValue = $"{item.ProcedureName} ({item.Status})", 
+                            UserId = userId ?? 1, 
+                            UserRole = !string.IsNullOrWhiteSpace(userRole) ? userRole : "Doctor" 
+                        }, tx);
+                }
+                catch {}
+
+                // 5. Synchronize Patient Modality
+                var syncResult = await SyncPatientModalityFromItemsInternalAsync(item.PatientID, conn, tx);
+
+                tx.Commit();
+
+                return (true, $"Procedure '{item.ProcedureName}' removed from treatment plan.", syncResult);
+            }
+            catch (Exception ex)
+            {
+                tx.Rollback();
+                _logger.LogError(ex, "Failed to delete treatment item #{ItemId}", itemId);
+                throw;
+            }
+        }
+
+        // =========================================================================
+        // 11C. SYNCHRONIZE PATIENT MODALITY FROM ACTIVE TREATMENT ITEMS
+        // =========================================================================
+        public async Task<PatientModalitySyncResult> SyncPatientModalityFromItemsAsync(int patientId)
+        {
+            using var conn = CreateConnection();
+            await conn.OpenAsync();
+            return await SyncPatientModalityFromItemsInternalAsync(patientId, conn);
+        }
+
+        private async Task<PatientModalitySyncResult> SyncPatientModalityFromItemsInternalAsync(int patientId, IDbConnection conn, IDbTransaction? tx = null)
+        {
+            var patient = await conn.QueryFirstOrDefaultAsync<Patient>(
+                "SELECT PatientID, CurrentTreatmentPlan, TreatmentStage, TargetShade FROM [dentist].[Patients] WHERE PatientID = @Id",
+                new { Id = patientId }, tx);
+
+            if (patient == null)
+            {
+                return new PatientModalitySyncResult { PatientId = patientId, ModalityReset = false };
+            }
+
+            var activeItems = (await conn.QueryAsync<TreatmentItem>(@"
+                SELECT TreatmentItemID, ProcedureName, Category, Status, ToothNumber, SourceRef, PriceNote, FinalPrice, Fee
+                FROM [dentist].[TreatmentItems]
+                WHERE PatientID = @PatientId
+                  AND Status NOT IN ('cancelled', 'declined')
+                ORDER BY TreatmentItemID DESC",
+                new { PatientId = patientId }, tx)).ToList();
+
+            bool hasActiveWhitening = activeItems.Any(i => 
+                string.Equals(i.Category, "whitening", StringComparison.OrdinalIgnoreCase) ||
+                (i.ProcedureName ?? "").IndexOf("whiten", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("bleach", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            bool hasActiveOrtho = activeItems.Any(i => 
+                string.Equals(i.Category, "ortho", StringComparison.OrdinalIgnoreCase) ||
+                (i.ProcedureName ?? "").IndexOf("brace", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("ortho", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            bool hasActiveCavity = activeItems.Any(i => 
+                string.Equals(i.Category, "restorative", StringComparison.OrdinalIgnoreCase) ||
+                (i.ProcedureName ?? "").IndexOf("cavity", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("restor", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("composite", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("amalgam", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("filling", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            string currentPlan = (patient.CurrentTreatmentPlan ?? "").ToLowerInvariant();
+            string? newPlan = patient.CurrentTreatmentPlan;
+            string? newStage = patient.TreatmentStage;
+            string? newShade = patient.TargetShade;
+            bool resetOccurred = false;
+
+            if (currentPlan.Contains("whiten"))
+            {
+                if (!hasActiveWhitening)
+                {
+                    resetOccurred = true;
+                    if (hasActiveOrtho)
+                    {
+                        var ortho = activeItems.First(i => string.Equals(i.Category, "ortho", StringComparison.OrdinalIgnoreCase) || (i.ProcedureName ?? "").IndexOf("brace", StringComparison.OrdinalIgnoreCase) >= 0);
+                        newPlan = "Braces (Orthodontics)";
+                        newStage = !string.IsNullOrWhiteSpace(ortho.SourceRef) ? ortho.SourceRef : "Active Alignment";
+                    }
+                    else if (hasActiveCavity)
+                    {
+                        var cavity = activeItems.First(i => string.Equals(i.Category, "restorative", StringComparison.OrdinalIgnoreCase) || (i.ProcedureName ?? "").IndexOf("cavity", StringComparison.OrdinalIgnoreCase) >= 0);
+                        newPlan = "Cavity Restorative";
+                        newStage = cavity.ToothNumber > 0 ? $"Tooth #{cavity.ToothNumber}" : "Restorative Care";
+                        newShade = null;
+                    }
+                    else
+                    {
+                        newPlan = null;
+                        newStage = null;
+                        newShade = null;
+                    }
+                }
+            }
+            else if (currentPlan.Contains("brace") || currentPlan.Contains("ortho"))
+            {
+                if (!hasActiveOrtho)
+                {
+                    resetOccurred = true;
+                    if (hasActiveWhitening)
+                    {
+                        var whiten = activeItems.First(i => string.Equals(i.Category, "whitening", StringComparison.OrdinalIgnoreCase) || (i.ProcedureName ?? "").IndexOf("whiten", StringComparison.OrdinalIgnoreCase) >= 0);
+                        newPlan = "Teeth Whitening";
+                        newStage = !string.IsNullOrWhiteSpace(whiten.SourceRef) ? whiten.SourceRef : "Active Whitening";
+                    }
+                    else if (hasActiveCavity)
+                    {
+                        var cavity = activeItems.First(i => string.Equals(i.Category, "restorative", StringComparison.OrdinalIgnoreCase) || (i.ProcedureName ?? "").IndexOf("cavity", StringComparison.OrdinalIgnoreCase) >= 0);
+                        newPlan = "Cavity Restorative";
+                        newStage = cavity.ToothNumber > 0 ? $"Tooth #{cavity.ToothNumber}" : "Restorative Care";
+                        newShade = null;
+                    }
+                    else
+                    {
+                        newPlan = null;
+                        newStage = null;
+                        newShade = null;
+                    }
+                }
+            }
+            else if (currentPlan.Contains("cavity") || currentPlan.Contains("restor"))
+            {
+                if (!hasActiveCavity)
+                {
+                    resetOccurred = true;
+                    if (hasActiveOrtho)
+                    {
+                        var ortho = activeItems.First(i => string.Equals(i.Category, "ortho", StringComparison.OrdinalIgnoreCase) || (i.ProcedureName ?? "").IndexOf("brace", StringComparison.OrdinalIgnoreCase) >= 0);
+                        newPlan = "Braces (Orthodontics)";
+                        newStage = !string.IsNullOrWhiteSpace(ortho.SourceRef) ? ortho.SourceRef : "Active Alignment";
+                    }
+                    else if (hasActiveWhitening)
+                    {
+                        var whiten = activeItems.First(i => string.Equals(i.Category, "whitening", StringComparison.OrdinalIgnoreCase) || (i.ProcedureName ?? "").IndexOf("whiten", StringComparison.OrdinalIgnoreCase) >= 0);
+                        newPlan = "Teeth Whitening";
+                        newStage = !string.IsNullOrWhiteSpace(whiten.SourceRef) ? whiten.SourceRef : "Active Whitening";
+                    }
+                    else
+                    {
+                        newPlan = null;
+                        newStage = null;
+                        newShade = null;
+                    }
+                }
+            }
+            else if (string.IsNullOrWhiteSpace(currentPlan) || currentPlan.Contains("general consultation"))
+            {
+                if (hasActiveOrtho)
+                {
+                    var ortho = activeItems.First(i => string.Equals(i.Category, "ortho", StringComparison.OrdinalIgnoreCase) || (i.ProcedureName ?? "").IndexOf("brace", StringComparison.OrdinalIgnoreCase) >= 0);
+                    newPlan = "Braces (Orthodontics)";
+                    newStage = !string.IsNullOrWhiteSpace(ortho.SourceRef) ? ortho.SourceRef : "Active Alignment";
+                }
+                else if (hasActiveWhitening)
+                {
+                    var whiten = activeItems.First(i => string.Equals(i.Category, "whitening", StringComparison.OrdinalIgnoreCase) || (i.ProcedureName ?? "").IndexOf("whiten", StringComparison.OrdinalIgnoreCase) >= 0);
+                    newPlan = "Teeth Whitening";
+                    newStage = !string.IsNullOrWhiteSpace(whiten.SourceRef) ? whiten.SourceRef : "Active Whitening";
+                }
+                else if (hasActiveCavity)
+                {
+                    var cavity = activeItems.First(i => string.Equals(i.Category, "restorative", StringComparison.OrdinalIgnoreCase) || (i.ProcedureName ?? "").IndexOf("cavity", StringComparison.OrdinalIgnoreCase) >= 0);
+                    newPlan = "Cavity Restorative";
+                    newStage = cavity.ToothNumber > 0 ? $"Tooth #{cavity.ToothNumber}" : "Restorative Care";
+                }
+            }
+
+            if (newPlan != patient.CurrentTreatmentPlan || newStage != patient.TreatmentStage || newShade != patient.TargetShade)
+            {
+                await conn.ExecuteAsync(@"
+                    UPDATE [dentist].[Patients]
+                    SET CurrentTreatmentPlan = @NewPlan,
+                        TreatmentStage = @NewStage,
+                        TargetShade = @NewShade,
+                        UpdatedAt = SYSUTCDATETIME()
+                    WHERE PatientID = @PatientId",
+                    new { NewPlan = newPlan, NewStage = newStage, NewShade = newShade, PatientId = patientId }, tx);
+
+                _logger.LogInformation("Patient #{PatientId} modality synchronized from TreatmentItems. Old: '{OldPlan}' -> New: '{NewPlan}'",
+                    patientId, patient.CurrentTreatmentPlan, newPlan);
+            }
+
+            return new PatientModalitySyncResult
+            {
+                PatientId = patientId,
+                CurrentTreatmentPlan = newPlan,
+                TreatmentStage = newStage,
+                TargetShade = newShade,
+                ModalityReset = resetOccurred,
+                ActiveItemsCount = activeItems.Count,
+                Message = resetOccurred ? "Patient clinical modality reset due to procedure deletion." : "Modality in sync with treatment items."
+            };
+        }
+
+        // =========================================================================
+        // 11D. GET TRIPARTITE MODALITIES STATUS FOR PATIENT (Braces / Whitening / Cavity)
+        // =========================================================================
+        public async Task<PatientModalitiesStatusDto> GetPatientModalitiesStatusAsync(int patientId)
+        {
+            using var conn = CreateConnection();
+            await conn.OpenAsync();
+
+            var patient = await conn.QueryFirstOrDefaultAsync<Patient>(
+                "SELECT PatientID, CurrentTreatmentPlan, TreatmentStage, TargetShade FROM [dentist].[Patients] WHERE PatientID = @Id",
+                new { Id = patientId });
+
+            var items = (await conn.QueryAsync<TreatmentItem>(@"
+                SELECT TreatmentItemID, ProcedureName, Category, Status, ToothNumber, SourceRef, PriceNote, FinalPrice, Fee
+                FROM [dentist].[TreatmentItems]
+                WHERE PatientID = @PatientId
+                  AND Status NOT IN ('cancelled', 'declined')
+                ORDER BY TreatmentItemID DESC",
+                new { PatientId = patientId })).ToList();
+
+            // Odontogram findings
+            var decayedTeeth = (await conn.QueryAsync<int>(@"
+                SELECT ToothNumber FROM [dentist].[TeethState]
+                WHERE PatientID = @PatientId
+                  AND (ConditionStatus LIKE '%caries%' OR ConditionStatus LIKE '%decay%' OR ConditionStatus LIKE '%damaged%' OR ConditionColor = '#EF4444' OR ConditionColor = '#F87171')",
+                new { PatientId = patientId })).Distinct().ToList();
+
+            string currentPlan = (patient?.CurrentTreatmentPlan ?? "").ToLowerInvariant();
+
+            var result = new PatientModalitiesStatusDto
+            {
+                PatientId = patientId,
+                CurrentTreatmentPlan = patient?.CurrentTreatmentPlan,
+                TreatmentStage = patient?.TreatmentStage,
+                TargetShade = patient?.TargetShade
+            };
+
+            // 1. Braces (Orthodontics)
+            var orthoItem = items.FirstOrDefault(i => 
+                string.Equals(i.Category, "ortho", StringComparison.OrdinalIgnoreCase) ||
+                (i.ProcedureName ?? "").IndexOf("brace", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("ortho", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            bool isBracesActive = currentPlan.Contains("brace") || currentPlan.Contains("ortho") || orthoItem != null;
+            result.Braces = new ModalityDetailDto
+            {
+                Active = isBracesActive,
+                Status = orthoItem?.Status ?? (isBracesActive ? "active" : "none"),
+                Title = "Braces (Orthodontics)",
+                Stage = patient?.TreatmentStage ?? orthoItem?.SourceRef ?? (isBracesActive ? "Stage 1 (Leveling)" : null),
+                Specification = patient?.TargetShade ?? (isBracesActive ? "0.014 Heat-Activated NiTi" : null),
+                PlannedCount = orthoItem != null ? 1 : (isBracesActive ? 1 : 0),
+                TreatmentItemId = orthoItem?.TreatmentItemID,
+                TotalFee = orthoItem?.FinalPrice ?? (int?)orthoItem?.Fee
+            };
+
+            // 2. Teeth Whitening
+            var whitenItem = items.FirstOrDefault(i => 
+                string.Equals(i.Category, "whitening", StringComparison.OrdinalIgnoreCase) ||
+                (i.ProcedureName ?? "").IndexOf("whiten", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("bleach", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            bool isWhiteningActive = currentPlan.Contains("whiten") || currentPlan.Contains("bleach") || whitenItem != null;
+            result.Whitening = new ModalityDetailDto
+            {
+                Active = isWhiteningActive,
+                Status = whitenItem?.Status ?? (isWhiteningActive ? "in_progress" : "none"),
+                Title = "Teeth Whitening",
+                Stage = patient?.TreatmentStage ?? whitenItem?.SourceRef ?? (isWhiteningActive ? "Session 1 of 3" : null),
+                Specification = patient?.TargetShade ?? (isWhiteningActive ? "Initial: A3.5 ➔ Target: B1" : null),
+                PlannedCount = whitenItem != null ? 1 : (isWhiteningActive ? 1 : 0),
+                TreatmentItemId = whitenItem?.TreatmentItemID,
+                TotalFee = whitenItem?.FinalPrice ?? (int?)whitenItem?.Fee
+            };
+
+            // 3. Cavities & Restorative
+            var cavityItems = items.Where(i => 
+                string.Equals(i.Category, "restorative", StringComparison.OrdinalIgnoreCase) ||
+                (i.ProcedureName ?? "").IndexOf("cavity", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("restor", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("composite", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("amalgam", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (i.ProcedureName ?? "").IndexOf("filling", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+
+            var cavityTeethSet = new HashSet<int>(decayedTeeth);
+            foreach (var ci in cavityItems)
+            {
+                if (ci.ToothNumber > 0) cavityTeethSet.Add(ci.ToothNumber);
+            }
+
+            var affectedTeethList = cavityTeethSet.OrderBy(t => t).Select(t => $"#{t}").ToList();
+            bool isCavityActive = cavityItems.Count > 0 || affectedTeethList.Count > 0 || currentPlan.Contains("cavity") || currentPlan.Contains("restor");
+
+            result.Cavity = new ModalityDetailDto
+            {
+                Active = isCavityActive,
+                Status = cavityItems.Any(i => i.Status == "in_progress") ? "in_progress" : (isCavityActive ? "planned" : "none"),
+                Title = "Cavities & Restorations",
+                Stage = patient?.TreatmentStage ?? (affectedTeethList.Count > 0 ? $"{affectedTeethList.Count} Teeth Diagnosed" : "Restorative Protocol"),
+                Specification = patient?.TargetShade ?? (isCavityActive ? "Composite Resin / GIC" : null),
+                PlannedCount = Math.Max(cavityItems.Count, affectedTeethList.Count),
+                AffectedTeeth = affectedTeethList,
+                TreatmentItemId = cavityItems.FirstOrDefault()?.TreatmentItemID,
+                TotalFee = cavityItems.Sum(c => c.FinalPrice ?? (int)c.Fee)
+            };
+
+            return result;
         }
 
         // =========================================================================
