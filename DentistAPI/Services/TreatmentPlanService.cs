@@ -28,17 +28,23 @@ namespace DentistAPI.Services
         Task<List<UnplannedFindingDto>> GetUnplannedFindingsAsync(int patientId);
         Task<int> SyncDirectoryModalitiesAsync(int patientId, int doctorId);
         Task<List<TreatmentCatalogItem>> GetCatalogAsync();
+        Task<AutoDiagnosticFeeResult> EnsureDiagnosticFeeAsync(int patientId, AutoDiagnosticFeeRequest request);
     }
 
     public class TreatmentPlanService : ITreatmentPlanService
     {
         private readonly string _connectionString;
+        private readonly ITreatmentPolicyService _policyService;
         private readonly ILogger<TreatmentPlanService> _logger;
 
-        public TreatmentPlanService(IConfiguration configuration, ILogger<TreatmentPlanService> logger)
+        public TreatmentPlanService(
+            IConfiguration configuration, 
+            ITreatmentPolicyService policyService,
+            ILogger<TreatmentPlanService> logger)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection") 
                                 ?? "Server=DBSERVER3;Database=DentistAPI;User Id=specnz;Password=nzspe@1;TrustServerCertificate=True;";
+            _policyService = policyService;
             _logger = logger;
         }
 
@@ -115,6 +121,15 @@ namespace DentistAPI.Services
             if (string.Equals(request.Source, "voice", StringComparison.OrdinalIgnoreCase))
             {
                 status = "draft"; // Voice entries always start as draft until confirmed
+            }
+            else if (string.Equals(status, "in_progress", StringComparison.OrdinalIgnoreCase))
+            {
+                var startPolicy = await _policyService.CanStartTreatmentAsync(request.PatientId, 0);
+                if (!startPolicy.Allowed)
+                {
+                    await _policyService.LogBlockedAttemptAsync(request.CreatedBy, "Doctor", request.PatientId, "CREATE_ACTIVE_TREATMENT", startPolicy.ErrorCode ?? TreatmentPolicyErrorCodes.ActiveTreatmentExists, startPolicy.Message);
+                    throw new TreatmentPolicyException(startPolicy);
+                }
             }
 
             string toothKey = toothNo > 0 ? toothNo.ToString() : "ALL";
@@ -366,6 +381,13 @@ namespace DentistAPI.Services
                 {
                     throw new UnauthorizedAccessException("Receptionists cannot modify treatment prices. Only Doctors or Admins can adjust fees.");
                 }
+
+                var editPolicy = await _policyService.CanEditTreatmentAsync(itemId);
+                if (!editPolicy.Allowed)
+                {
+                    await _policyService.LogBlockedAttemptAsync(request.UserId, request.UserRole, current.PatientID, "EDIT_TREATMENT_PRICE", editPolicy.ErrorCode ?? TreatmentPolicyErrorCodes.TreatmentLocked, editPolicy.Message);
+                    throw new TreatmentPolicyException(editPolicy);
+                }
             }
 
             DateTime? startedAt = current.StartedAt;
@@ -378,47 +400,12 @@ namespace DentistAPI.Services
             {
                 if (startedAt == null) startedAt = DateTime.UtcNow;
 
-                // CLINICAL RULE: Single active treatment per tooth in a single appointment/session
-                if (current.ToothNumber > 0)
+                // Rule 2 & D1: Patient-level single active treatment policy
+                var startPolicy = await _policyService.CanStartTreatmentAsync(current.PatientID, itemId);
+                if (!startPolicy.Allowed)
                 {
-                    var activeOther = await conn.QueryFirstOrDefaultAsync<TreatmentItem>(@"
-                        SELECT TOP 1 * FROM [dentist].[TreatmentItems]
-                        WHERE PatientID = @PatientId
-                          AND ToothNumber = @ToothNumber
-                          AND Status = 'in_progress'
-                          AND TreatmentItemID <> @Id",
-                        new { PatientId = current.PatientID, ToothNumber = current.ToothNumber, Id = itemId });
-
-                    if (activeOther != null)
-                    {
-                        string? transitionNote = !string.IsNullOrWhiteSpace(request.TransitionNotes) 
-                            ? request.TransitionNotes 
-                            : request.ClosedReason;
-
-                        if (!string.IsNullOrWhiteSpace(transitionNote))
-                        {
-                            // Stop previous treatment on this tooth with mandatory clinical transition note
-                            await conn.ExecuteAsync(@"
-                                UPDATE [dentist].[TreatmentItems]
-                                SET Status = 'completed',
-                                    ClosedReason = @Reason,
-                                    CompletedAt = SYSUTCDATETIME(),
-                                    UpdatedAt = SYSUTCDATETIME()
-                                WHERE TreatmentItemID = @OtherId",
-                                new 
-                                { 
-                                    Reason = $"Stopped for next treatment '{current.ProcedureName}': {transitionNote}", 
-                                    OtherId = activeOther.TreatmentItemID 
-                                });
-                        }
-                        else
-                        {
-                            throw new InvalidOperationException(
-                                $"Active treatment '{activeOther.ProcedureName}' is already in progress on Tooth #{current.ToothNumber}. " +
-                                $"Only one treatment at a time can be implemented on a tooth in a single appointment. " +
-                                $"Please stop the current treatment and provide clinical notes explaining why the next treatment is being started.");
-                        }
-                    }
+                    await _policyService.LogBlockedAttemptAsync(request.UserId, request.UserRole, current.PatientID, "START_TREATMENT", startPolicy.ErrorCode ?? TreatmentPolicyErrorCodes.ActiveTreatmentExists, startPolicy.Message);
+                    throw new TreatmentPolicyException(startPolicy);
                 }
             }
 
@@ -1162,6 +1149,129 @@ namespace DentistAPI.Services
             var items = await conn.QueryAsync<TreatmentCatalogItem>(
                 "SELECT * FROM [dentist].[treatment_catalog] WHERE is_active = 1 ORDER BY category, default_price");
             return items.ToList();
+        }
+
+        // =========================================================================
+        // 13. AUTO-DIAGNOSTIC FEES (CONSULTATION & DEVICE X-RAYS WITH DOCTOR RATES)
+        // =========================================================================
+        public async Task<AutoDiagnosticFeeResult> EnsureDiagnosticFeeAsync(int patientId, AutoDiagnosticFeeRequest request)
+        {
+            using var conn = CreateConnection();
+            int docId = request.DoctorId ?? 1;
+
+            if (string.Equals(request.FeeType, "consultation", StringComparison.OrdinalIgnoreCase))
+            {
+                // 1. Idempotency Check: Does patient already have Consultation in TreatmentItems?
+                string checkSql = @"
+                    SELECT TOP 1 TreatmentItemID FROM [dentist].[TreatmentItems]
+                    WHERE PatientID = @PatientId 
+                      AND (Category = 'consultation' OR ProcedureCode IN ('D0150', 'D0120'))";
+                
+                var existing = await conn.QueryFirstOrDefaultAsync<long?>(checkSql, new { PatientId = patientId });
+                if (existing.HasValue && existing.Value > 0)
+                {
+                    return new AutoDiagnosticFeeResult 
+                    { 
+                        Added = false, 
+                        ItemId = existing.Value,
+                        Message = "Consultation fee already exists in treatment plan." 
+                    };
+                }
+
+                // 2. Fetch DOCTOR'S custom configured Consultation Fee from DoctorFeeSchedules
+                string feeSql = @"
+                    SELECT TOP 1 StandardFee FROM [dentist].[DoctorFeeSchedules]
+                    WHERE DoctorID = @DoctorId AND (ProcedureCode = 'D0150' OR Category = 'consultation') AND IsActive = 1";
+                
+                int? feeNullable = await conn.QueryFirstOrDefaultAsync<int?>(feeSql, new { DoctorId = docId });
+                int fee = feeNullable.GetValueOrDefault(0);
+                if (fee <= 0)
+                {
+                    // Fallback to clinic treatment_catalog
+                    var catFee = await conn.QueryFirstOrDefaultAsync<int?>(
+                        "SELECT TOP 1 default_price FROM [dentist].[treatment_catalog] WHERE procedure_code = 'D0150'");
+                    fee = catFee.GetValueOrDefault(5000);
+                }
+                if (fee <= 0) fee = 5000;
+
+                // 3. Create Treatment Item
+                var item = await CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                {
+                    PatientId = patientId,
+                    DoctorId = docId,
+                    Name = "Dental Consultation & Diagnosis",
+                    Category = "consultation",
+                    ProcedureCode = "D0150",
+                    ToothNo = 0,
+                    EstimatedPrice = fee,
+                    FinalPrice = fee,
+                    PlannedVisits = 1,
+                    Status = "accepted",
+                    Source = "auto_consultation"
+                });
+
+                return new AutoDiagnosticFeeResult 
+                { 
+                    Added = true, 
+                    Fee = fee, 
+                    Name = "Dental Consultation & Diagnosis", 
+                    ProcedureCode = "D0150", 
+                    ItemId = item.TreatmentItemID,
+                    Message = $"Consultation fee (Rs {fee:N0}) added to treatment plan."
+                };
+            }
+            else if (string.Equals(request.FeeType, "rvg_xray", StringComparison.OrdinalIgnoreCase) || 
+                     string.Equals(request.FeeType, "opg_xray", StringComparison.OrdinalIgnoreCase))
+            {
+                bool isOpg = string.Equals(request.FeeType, "opg_xray", StringComparison.OrdinalIgnoreCase);
+                string code = isOpg ? "D0330" : "D0220";
+                int toothNo = request.ToothNumber ?? 0;
+                string defName = isOpg 
+                    ? "Full Mouth Panoramic OPG X-Ray" 
+                    : (toothNo > 0 ? $"Digital RVG Diagnostic X-Ray (Tooth #{toothNo})" : "Digital RVG Diagnostic X-Ray");
+
+                // Fetch DOCTOR'S custom configured X-Ray Fee from DoctorFeeSchedules
+                string feeSql = @"
+                    SELECT TOP 1 StandardFee FROM [dentist].[DoctorFeeSchedules]
+                    WHERE DoctorID = @DoctorId AND ProcedureCode = @Code AND IsActive = 1";
+                
+                int? feeNullable = await conn.QueryFirstOrDefaultAsync<int?>(feeSql, new { DoctorId = docId, Code = code });
+                int fee = feeNullable.GetValueOrDefault(0);
+                if (fee <= 0)
+                {
+                    var catFee = await conn.QueryFirstOrDefaultAsync<int?>(
+                        "SELECT TOP 1 default_price FROM [dentist].[treatment_catalog] WHERE procedure_code = @Code", new { Code = code });
+                    fee = catFee.GetValueOrDefault(isOpg ? 8500 : 2500);
+                }
+                if (fee <= 0) fee = isOpg ? 8500 : 2500;
+
+                var item = await CreateTreatmentItemAsync(new CreateTreatmentItemRequest
+                {
+                    PatientId = patientId,
+                    DoctorId = docId,
+                    Name = defName,
+                    Category = "xray",
+                    ProcedureCode = code,
+                    ToothNo = toothNo,
+                    EstimatedPrice = fee,
+                    FinalPrice = fee,
+                    PlannedVisits = 1,
+                    Status = "accepted",
+                    Source = request.SourceRef ?? "auto_device_xray"
+                });
+
+                return new AutoDiagnosticFeeResult 
+                { 
+                    Added = true, 
+                    Fee = fee, 
+                    Name = defName, 
+                    ProcedureCode = code, 
+                    ItemId = item.TreatmentItemID,
+                    Message = $"{defName} fee (Rs {fee:N0}) added to treatment plan."
+                };
+            }
+
+            return new AutoDiagnosticFeeResult { Added = false, Message = $"Unrecognized fee type '{request.FeeType}'." };
         }
     }
 }

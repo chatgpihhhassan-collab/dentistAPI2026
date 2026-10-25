@@ -27,6 +27,7 @@ namespace DentistAPI.Controllers
         private readonly IFileUploadSecurityService _fileUploadService;
         private readonly IAuditLogService _auditLogService;
         private readonly IDataNormalizationService _dataNorm;
+        private readonly ITreatmentPolicyService _policyService;
         private readonly ILogger<PatientsController> _logger;
         private readonly string _apiKey;
         private readonly string _geminiEndpoint;
@@ -38,6 +39,7 @@ namespace DentistAPI.Controllers
             IFileUploadSecurityService fileUploadService,
             IAuditLogService auditLogService,
             IDataNormalizationService dataNorm,
+            ITreatmentPolicyService policyService,
             ILogger<PatientsController> logger)
         {
             _repository = repository;
@@ -46,6 +48,7 @@ namespace DentistAPI.Controllers
             _fileUploadService = fileUploadService;
             _auditLogService = auditLogService;
             _dataNorm = dataNorm;
+            _policyService = policyService;
             _logger = logger;
             _apiKey = config["GEMINI_API_KEY"] ?? string.Empty;
             var modelName = !string.IsNullOrEmpty(config["GEMINI_MODEL"]) ? config["GEMINI_MODEL"]! : "gemini-flash-latest";
@@ -797,6 +800,16 @@ Rules:
                         }
                     }
 
+                    // Rule 4 & D2: Started + payment received = dental chart for this tooth is locked!
+                    var chartPolicy = await _policyService.CanEditChartAsync(request.PatientId, tNumber, toothKey);
+                    if (!chartPolicy.Allowed)
+                    {
+                        string clientIpStr = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                        int docId = update.DoctorId ?? request.Updates?.FirstOrDefault()?.DoctorId ?? 1;
+                        await _policyService.LogBlockedAttemptAsync(docId, "Doctor", request.PatientId, "UPDATE_CHART", chartPolicy.ErrorCode ?? TreatmentPolicyErrorCodes.ChartLocked, chartPolicy.Message, clientIpStr);
+                        return StatusCode(StatusCodes.Status409Conflict, chartPolicy);
+                    }
+
                     // Preserve actual diagnosis/condition and prevent generic status overwrite
                     string resolvedStatus = update.ConditionStatus ?? update.Status ?? "Healthy";
                     if (resolvedStatus == "Completed" || resolvedStatus == "Planned" || resolvedStatus == "In Progress")
@@ -1113,6 +1126,19 @@ Rules:
                 if (existing == null) return NotFound(new { message = "Patient not found." });
 
                 req.PatientID = id;
+                // Rule 1: Check if doctor is being changed on a patient with active treatment
+                if (req.DoctorID > 0 && req.DoctorID != existing.DoctorID)
+                {
+                    var docPolicy = await _policyService.CanChangeDoctorAsync(id);
+                    if (!docPolicy.Allowed)
+                    {
+                        TryAuthorizePatientAccess(id, out var callerId, out var callerRole, out _);
+                        string clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                        await _policyService.LogBlockedAttemptAsync(callerId ?? req.DoctorID, callerRole ?? "Doctor", id, "CHANGE_DOCTOR", docPolicy.ErrorCode ?? TreatmentPolicyErrorCodes.DoctorLocked, docPolicy.Message, clientIp);
+                        return StatusCode(StatusCodes.Status409Conflict, docPolicy);
+                    }
+                }
+
                 // Preserve doctor ID if not supplied
                 if (req.DoctorID <= 0) req.DoctorID = existing.DoctorID;
 

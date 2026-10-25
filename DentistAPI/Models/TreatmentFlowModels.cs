@@ -340,4 +340,114 @@ namespace DentistAPI.Models
         public decimal TotalAdvanceReceived { get; set; }
         public string Currency { get; set; } = "PKR";
     }
+
+    // ==========================================
+    // 🛡️ REUSABLE TREATMENT POLICY PERMISSION MODELS
+    // ==========================================
+
+    public static class TreatmentPolicyErrorCodes
+    {
+        public const string DoctorLocked = "DOCTOR_LOCKED";
+        public const string ActiveTreatmentExists = "ACTIVE_TREATMENT_EXISTS";
+        public const string ChartLocked = "CHART_LOCKED";
+        public const string TreatmentLocked = "TREATMENT_LOCKED";
+        public const string InvalidState = "INVALID_STATE";
+    }
+
+    public class PolicyResult
+    {
+        public bool Allowed { get; set; } = true;
+        public string? ErrorCode { get; set; }
+        public string? ReasonCode { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public string? MessageUrdu { get; set; }
+        public int? ToothNumber { get; set; }
+        public string? ToothKey { get; set; }
+        public string? TreatmentName { get; set; }
+        public int? ActiveDoctorId { get; set; }
+        public string? ActiveDoctorName { get; set; }
+        public int NetPaidAmount { get; set; } = 0;
+        public long? ActiveTreatmentItemId { get; set; }
+
+        public static PolicyResult Allow(string message = "Action permitted.") => new() { Allowed = true, Message = message };
+
+        public static PolicyResult Block(
+            string errorCode,
+            string message,
+            string? messageUrdu = null,
+            int? toothNumber = null,
+            string? toothKey = null,
+            string? treatmentName = null,
+            int? activeDoctorId = null,
+            string? activeDoctorName = null,
+            int netPaidAmount = 0,
+            long? activeTreatmentItemId = null,
+            string? reasonCode = null)
+        {
+            return new PolicyResult
+            {
+                Allowed = false,
+                ErrorCode = errorCode,
+                ReasonCode = reasonCode ?? errorCode,
+                Message = message,
+                MessageUrdu = messageUrdu,
+                ToothNumber = toothNumber,
+                ToothKey = toothKey,
+                TreatmentName = treatmentName,
+                ActiveDoctorId = activeDoctorId,
+                ActiveDoctorName = activeDoctorName,
+                NetPaidAmount = netPaidAmount,
+                ActiveTreatmentItemId = activeTreatmentItemId
+            };
+        }
+    }
+
+    public class TreatmentPolicyException : Exception
+    {
+        public PolicyResult Result { get; }
+        public TreatmentPolicyException(PolicyResult result) : base(result.Message)
+        {
+            Result = result;
+        }
+    }
+
+    public class PatientTreatmentPolicyDto
+    {
+        public int PatientId { get; set; }
+        public bool HasActiveTreatment { get; set; }
+        public long? ActiveTreatmentItemId { get; set; }
+        public int? ActiveToothNumber { get; set; }
+        public string? ActiveToothKey { get; set; }
+        public string? ActiveTreatmentName { get; set; }
+        public int? ActiveDoctorId { get; set; }
+        public string? ActiveDoctorName { get; set; }
+        public int ActiveNetPaid { get; set; }
+        public bool CanChangeDoctor { get; set; } = true;
+        public string? DoctorLockReason { get; set; }
+        public string? DoctorLockReasonUrdu { get; set; }
+        public bool CanStartNewTreatment { get; set; } = true;
+        public string? StartLockReason { get; set; }
+        public string? StartLockReasonUrdu { get; set; }
+        public List<int> LockedToothNumbers { get; set; } = new();
+        public List<string> LockedToothKeys { get; set; } = new();
+        public int TotalOutstandingBalance { get; set; }
+    }
+
+    public class AutoDiagnosticFeeRequest
+    {
+        public string FeeType { get; set; } = "consultation"; // "consultation" | "rvg_xray" | "opg_xray"
+        public int? ToothNumber { get; set; }
+        public int? DoctorId { get; set; }
+        public string? SourceRef { get; set; }
+    }
+
+    public class AutoDiagnosticFeeResult
+    {
+        public bool Added { get; set; }
+        public int Fee { get; set; }
+        public string? Name { get; set; }
+        public string? ProcedureCode { get; set; }
+        public long? ItemId { get; set; }
+        public string? Message { get; set; }
+    }
 }

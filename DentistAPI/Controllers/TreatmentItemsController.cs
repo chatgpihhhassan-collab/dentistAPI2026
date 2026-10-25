@@ -16,16 +16,40 @@ namespace DentistAPI.Controllers
     {
         private readonly DentalRepository _repository;
         private readonly ITreatmentPlanService _treatmentPlanService;
+        private readonly ITreatmentPolicyService _policyService;
         private readonly ILogger<TreatmentItemsController> _logger;
 
         public TreatmentItemsController(
             DentalRepository repository, 
             ITreatmentPlanService treatmentPlanService,
+            ITreatmentPolicyService policyService,
             ILogger<TreatmentItemsController> logger)
         {
             _repository = repository;
             _treatmentPlanService = treatmentPlanService;
+            _policyService = policyService;
             _logger = logger;
+        }
+
+        // ==========================================
+        // 0. GET TREATMENT POLICY SNAPSHOT (Single source of truth for UI guards)
+        // ==========================================
+        [HttpGet("patients/{id:int}/treatment-policy")]
+        [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+        public async Task<IActionResult> GetTreatmentPolicy(int id)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+
+            try
+            {
+                var policy = await _policyService.GetPatientPolicyAsync(id);
+                return Ok(policy);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting treatment policy for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
         }
 
         // ==========================================
@@ -96,6 +120,10 @@ namespace DentistAPI.Controllers
                     message = $"Treatment '{item.ProcedureName}' added to plan successfully."
                 });
             }
+            catch (TreatmentPolicyException pex)
+            {
+                return StatusCode(StatusCodes.Status409Conflict, pex.Result);
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating treatment item for patient {PatientId}", id);
@@ -131,6 +159,10 @@ namespace DentistAPI.Controllers
                     item = updatedItem,
                     message = $"Treatment updated successfully (Status: {updatedItem?.Status})."
                 });
+            }
+            catch (TreatmentPolicyException pex)
+            {
+                return StatusCode(StatusCodes.Status409Conflict, pex.Result);
             }
             catch (UnauthorizedAccessException uex)
             {
@@ -497,7 +529,28 @@ namespace DentistAPI.Controllers
         }
 
         // ==========================================
-        // 14. LEGACY ENDPOINTS PRESERVED FOR FULL COMPATIBILITY
+        // 14. AUTO-DIAGNOSTIC FEES (CONSULTATION & DEVICE X-RAYS)
+        // ==========================================
+        [HttpPost("patients/{id:int}/auto-diagnostic-fee")]
+        public async Task<IActionResult> AutoDiagnosticFee(int id, [FromBody] AutoDiagnosticFeeRequest request)
+        {
+            if (id <= 0) return BadRequest(new { message = "Valid patient ID is required." });
+            if (request == null) return BadRequest(new { message = "Request body is required." });
+
+            try
+            {
+                var result = await _treatmentPlanService.EnsureDiagnosticFeeAsync(id, request);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing auto-diagnostic fee for patient {PatientId}", id);
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // ==========================================
+        // 15. LEGACY ENDPOINTS PRESERVED FOR FULL COMPATIBILITY
         // ==========================================
         [HttpPost("patients/{id:int}/checkin")]
         public async Task<IActionResult> CheckinPatient(int id, [FromBody] CheckinPatientRequest? request)

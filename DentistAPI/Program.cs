@@ -30,6 +30,8 @@ builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IDataNormalizationService, DataNormalizationService>();
 builder.Services.AddScoped<ITreatmentPlanService, TreatmentPlanService>();
 builder.Services.AddScoped<TreatmentPlanService>();
+builder.Services.AddScoped<ITreatmentPolicyService, TreatmentPolicyService>();
+builder.Services.AddScoped<TreatmentPolicyService>();
 
 // Register WhatsApp OpenWA Service & Background Queue Processor
 builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>(client =>
